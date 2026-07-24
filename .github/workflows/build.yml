@@ -23,11 +23,14 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Create gradle wrapper
+      - name: Create Android project files
         run: |
-          cd android
-          gradle wrapper --gradle-version 8.7
-          cd ..
+          # 生成必要的Android项目文件
+          flutter create --platforms=android --no-overwrite .
+          # 确保gradle wrapper存在
+          if [ ! -f android/gradlew ]; then
+            cd android && gradle wrapper --gradle-version 8.7 && cd ..
+          fiick
 
       - name: Install dependencies
         run: flutter pub get
