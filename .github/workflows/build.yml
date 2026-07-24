@@ -1,0 +1,66 @@
+name: Flutter Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew 2>/dev/null; true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate keystore
+        run: |
+          keytool -genkey -v \
+            -keystore android/app/release.jks \
+            -alias my-four-app4 \
+            -keyalg RSA -keysize 2048 -validity 36500 \
+            -storepass myfour123456 \
+            -keypass myfour123456 \
+            -dname "CN=LRQ128, OU=Dev, O=Personal, L=BJ, ST=BJ, C=CN"
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Sign APK with apksigner (v1+v2+v3)
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+            --ks android/app/release.jks \
+            --ks-key-alias my-four-app4 \
+            --ks-pass pass:myfour123456 \
+            --key-pass pass:myfour123456 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Verify signature
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose \
+            build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
