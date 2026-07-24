@@ -474,6 +474,8 @@ class _HomeScreenState extends State<HomeScreen> {
             });
             await DatabaseService.saveSetting('names', names.join(','));
             await DatabaseService.saveSetting('closing_day', closingDay.toString());
+            await DatabaseService.saveSetting('rest_days', restDays.join(','));
+            _generateSchedule();
           },
         ),
       ),
