@@ -155,6 +155,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<int> _restDays = [0,2, 4]; // 默认休班日
   WeekSchedule? _currentSchedule;
   int _refreshOffset = 0;
+  int _weekOffset = 0; // 0=本周, 1=下周, 2=下下周
+  List<int>? _fixedRestPeoplePerDay; // 固定后的每日休班人索引
+  bool _hasInitialSolve = false; // 是否已首次求解
   List<WeekSchedule> _history = [];
 
   @override
@@ -180,42 +183,56 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _history = schedules);
   }
 
-  Future<void> _generateSchedule() async {
-    // 获取上周排班用于跨周约束
-    String? lastSunday99999;
-    if (_history.isNotEmpty) {
-      final lastWeek = _history.first;
-      for (final day in lastWeek.days) {
-        if (day.dayIndex == 6) {
-          // 周日(solver中6=周日)
-          lastSunday99999 = day.person99999;
-          break;
-        }
-      }
-    }
+  /// 根据周偏移获取周一日期
+  DateTime _getMonday(int offset) {
+    final now = DateTime.now();
+    final daysSinceMonday = now.weekday - 1;
+    return now.subtract(Duration(days: daysSinceMonday))
+        .add(Duration(days: offset * 7));
+  }
 
+  /// 获取上周排班的周日(lastDayIndex=6)盯99999的人
+  String? _getLastSunday99999() {
+    if (_history.isEmpty) return null;
+    final lastWeek = _history.first;
+    for (final day in lastWeek.days) {
+      if (day.dayIndex == 6) return day.person99999;
+    }
+    return null;
+  }
+
+  /// 首次完全求解：确定休班日+角色分配
+  Future<void> _generateSchedule() async {
     final solver = SimpleScheduleSolver(
       names: _names,
       userRestDays: _restDays.map(_toSolverDay).toList(),
       closingDay: _toSolverDay(_closingDay),
-      lastSunday99999: lastSunday99999,
+      lastSunday99999: _getLastSunday99999(),
     );
 
-    final now = DateTime.now();
-    // 计算本周一的日期
-    final daysSinceMonday = now.weekday - 1;
-    final monday = now.subtract(Duration(days: daysSinceMonday));
-
-    final schedule = solver.solve(monday, offset: _refreshOffset);
+    final monday = _getMonday(_weekOffset);
+    final schedule = solver.solve(monday);
 
     if (schedule != null) {
+      // 提取每日休班人索引，固定下来
+      final workingDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+      final restIndices = workingDays.map((di) {
+        final day = schedule.days.firstWhere((d) => d.dayIndex == di);
+        return _names.indexOf(day.personRest);
+      }).toList();
+      
       await DatabaseService.saveSchedule(schedule);
-      setState(() => _currentSchedule = schedule);
+      setState(() {
+        _currentSchedule = schedule;
+        _fixedRestPeoplePerDay = restIndices;
+        _hasInitialSolve = true;
+        _refreshOffset = 0;
+      });
       await _loadHistory();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('排班成功！'), backgroundColor: Colors.green),
+          SnackBar(content: Text('${_weekLabel(_weekOffset)}排班成功！'), backgroundColor: Colors.green),
         );
       }
     } else {
@@ -227,37 +244,216 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// 刷新：仅重排 99999/协管，保持休班日不变
+  Future<void> _refreshSchedule() async {
+    if (_currentSchedule == null || _fixedRestPeoplePerDay == null) {
+      // 还没首次求解过，回退到完全求解
+      _refreshOffset++;
+      await _generateSchedule();
+      return;
+    }
+
+    _refreshOffset++;
+
+    final solver = SimpleScheduleSolver(
+      names: _names,
+      userRestDays: _restDays.map(_toSolverDay).toList(),
+      closingDay: _toSolverDay(_closingDay),
+      lastSunday99999: _getLastSunday99999(),
+    );
+
+    final monday = _getMonday(_weekOffset);
+    final schedule = solver.solveRolesOnly(monday, _fixedRestPeoplePerDay!, offset: _refreshOffset);
+
+    if (schedule != null) {
+      await DatabaseService.saveSchedule(schedule);
+      setState(() => _currentSchedule = schedule);
+      await _loadHistory();
+    } else {
+      // 没有更多组合了，回退到完全求解
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('没有更多组合了'), backgroundColor: Colors.orange),
+        );
+      }
+      _refreshOffset--; // 恢复
+    }
+  }
+
+  /// 构建导出专用完整排班表（非滚动式，所有天在一行）
+  Widget _buildExportSchedule(WeekSchedule schedule) {
+    final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+    return Container(
+      width: weekDays.length * 155.0 + 32, // 所有天水平排列
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 导出标题
+          Text('排班表 - ${_weekLabel(_weekOffset)}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(getDateRange(schedule),
+              style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+          const SizedBox(height: 12),
+          // 所有天卡水平排列（不滚动）
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: weekDays.map((dayIndex) {
+              final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
+              final dayDate = schedule.weekStart.add(Duration(days: dayIndex));
+              final today = DateTime.now();
+              final isToday = dayDate.year == today.year &&
+                              dayDate.month == today.month &&
+                              dayDate.day == today.day;
+              return Container(
+                width: 140,
+                margin: const EdgeInsets.only(right: 6),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: isToday ? Colors.blue[50] : Colors.grey[50],
+                  border: Border.all(color: isToday ? Colors.blue : Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    Text(_dayName(dayIndex),
+                        style: TextStyle(fontWeight: FontWeight.bold,
+                            fontSize: 14, color: isToday ? Colors.blue : null)),
+                    Text('${dayDate.month}/${dayDate.day}',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    if (isToday)
+                      const Text('📅', style: TextStyle(fontSize: 12)),
+                    const Divider(height: 8),
+                    Text('🏦 ${day.person99999}',
+                        style: const TextStyle(fontSize: 12)),
+                    Text('🤝 ${day.personXieguan}',
+                        style: const TextStyle(fontSize: 12)),
+                    if (_isUserSpecifiedRestDay(dayIndex, day.personRest))
+                      Text('🔴 休班 ${day.personRest}',
+                          style: TextStyle(fontSize: 11, color: Colors.orange[800])),
+                    if (day.personNoonRest.isNotEmpty)
+                      Text('☕ 午休 ${day.personNoonRest}',
+                          style: TextStyle(fontSize: 11, color: Colors.brown[600])),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          // 统计
+          Text('统计',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          ...schedule.names.map((name) {
+            int c9 = 0, cx = 0;
+            for (final d in schedule.days) {
+              if (d.person99999 == name) c9++;
+              if (d.personXieguan == name) cx++;
+            }
+            return Text('$name: 🏦×$c9  🤝×$cx',
+                style: const TextStyle(fontSize: 12));
+          }),
+        ],
+      ),
+    );
+  }
+
   Future<void> _exportToImage() async {
     if (_currentSchedule == null) return;
 
+    final schedule = _currentSchedule!;
+    final exportKey = GlobalKey();
+
+    // 弹窗显示完整排班表，然后截图
+    final captured = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(4),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: RepaintBoundary(
+            key: exportKey,
+            child: _buildExportSchedule(schedule),
+          ),
+        ),
+      ),
+    );
+
+    // 弹窗关闭后截图
     try {
-      final boundary = _scheduleKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) return;
+      // 用延迟方式：重新弹出纯截图用对话框
+      showDialog(
+        context: context,
+        barrierColor: Colors.transparent,
+        builder: (ctx2) {
+          final repaintKey = GlobalKey();
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            try {
+              final boundary = repaintKey.currentContext?.findRenderObject()
+                  as RenderRepaintBoundary?;
+              if (boundary == null) {
+                Navigator.pop(ctx2);
+                return;
+              }
 
-      final image = await boundary.toImage(pixelRatio: 2.0);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      final pngBytes = byteData!.buffer.asUint8List();
+              final image = await boundary.toImage(pixelRatio: 3.0);
+              final byteData = await image.toByteData(
+                  format: ui.ImageByteFormat.png);
+              final pngBytes = byteData!.buffer.asUint8List();
 
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
-      await file.writeAsBytes(pngBytes);
+              Navigator.pop(ctx2);
 
-      // 保存到手机相册
-      try {
-        const channel = MethodChannel('gallery_saver');
-        await channel.invokeMethod('saveToGallery', {'filePath': file.path});
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('排班表已保存到相册 📸'), backgroundColor: Colors.green),
+              final dir = await getTemporaryDirectory();
+              final file = File(
+                  '${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
+              await file.writeAsBytes(pngBytes);
+
+              // 保存到手机相册
+              try {
+                const channel = MethodChannel('gallery_saver');
+                await channel.invokeMethod('saveToGallery',
+                    {'filePath': file.path});
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('✅ 排班表已保存到「相册-排班表」文件夹'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ 图片已保存到临时目录:\n${file.path}'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            } catch (e) {
+              Navigator.pop(ctx2);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                      content: Text('导出失败: $e'),
+                      backgroundColor: Colors.red),
+                );
+              }
+            }
+          });
+          return RepaintBoundary(
+            key: repaintKey,
+            child: _buildExportSchedule(schedule),
           );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('保存失败，已保存到临时目录: ${file.path}'), backgroundColor: Colors.orange),
-          );
-        }
-      }
+        },
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -356,34 +552,48 @@ class _HomeScreenState extends State<HomeScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('本周排班表', style: Theme.of(context).textTheme.headlineSmall),
-                        Text(getDateRange(schedule), style: TextStyle(color: Colors.grey[600])),
-                      ],
-                    ),
-                  ),
                   Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        onPressed: () {
-                          setState(() => _refreshOffset++);
-                          _generateSchedule();
-                        },
-                        icon: const Icon(Icons.refresh, size: 20),
-                        tooltip: '刷新排班组合',
+                      // 周次选择
+                      DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _weekLabel(_weekOffset),
+                          items: const [
+                            DropdownMenuItem(value: '本周', child: Text('本周', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20))),
+                            DropdownMenuItem(value: '下周', child: Text('下周', style: TextStyle(fontSize: 20))),
+                            DropdownMenuItem(value: '下下周', child: Text('下下周', style: TextStyle(fontSize: 20))),
+                          ],
+                          onChanged: (v) {
+                            int newOffset = v == '本周' ? 0 : (v == '下周' ? 1 : 2);
+                            setState(() => _weekOffset = newOffset);
+                            _generateSchedule();
+                          },
+                        ),
                       ),
-                      TextButton.icon(
-                        onPressed: _generateNextWeek,
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('生成下周'),
+                      const Spacer(),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            onPressed: _refreshSchedule,
+                            icon: const Icon(Icons.refresh, size: 20),
+                            tooltip: '刷新角色分配',
+                          ),
+                          TextButton.icon(
+                            onPressed: _showNextWeekRestDialog,
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('生成下周'),
+                          ),
+                        ],
                       ),
                     ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, left: 4),
+                    child: Text(getDateRange(schedule), style: TextStyle(color: Colors.grey[600])),
                   ),
                 ],
               ),
@@ -538,12 +748,91 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
-    Future<void> _generateNextWeek() async {
+  String _weekLabel(int offset) {
+    switch (offset) {
+      case 0: return '本周';
+      case 1: return '下周';
+      case 2: return '下下周';
+      default: return '第${offset + 1}周';
+    }
+  }
+
+  /// 弹出休班日调整对话框
+  Future<void> _showNextWeekRestDialog() async {
     if (_currentSchedule == null) return;
-    // 生成本周下周一的日期
+    
+    // 默认下周继续使用当前休班日设置
+    List<int> newRestDays = List.from(_restDays);
+    
+    final result = await showDialog<List<int>>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('下周休班日调整'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('为下周每位柜员选择休班日：',
+                        style: TextStyle(fontSize: 14)),
+                    const SizedBox(height: 16),
+                    ...List.generate(_names.length, (i) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: DropdownButtonFormField<int>(
+                          value: newRestDays[i],
+                          decoration: InputDecoration(
+                            labelText: '${_names[i]} 休班日',
+                            border: const OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 0, child: Text('周日')),
+                            DropdownMenuItem(value: 1, child: Text('周一')),
+                            DropdownMenuItem(value: 2, child: Text('周二')),
+                            DropdownMenuItem(value: 3, child: Text('周三')),
+                            DropdownMenuItem(value: 4, child: Text('周四')),
+                            DropdownMenuItem(value: 5, child: Text('周五')),
+                          ],
+                          onChanged: (v) {
+                            setDialogState(() => newRestDays[i] = v!);
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, newRestDays),
+                  child: const Text('确认生成'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    
+    if (result != null) {
+      // 用户确认后，用调整后的休班日生成下周
+      await _doGenerateNextWeek(result);
+    }
+  }
+
+  /// 实际生成下周排班
+  Future<void> _doGenerateNextWeek(List<int> nextWeekRestDays) async {
+    if (_currentSchedule == null) return;
     final nextMonday = _currentSchedule!.weekStart.add(const Duration(days: 7));
     
-    // 获取上周日(本周六)的排班用于跨周约束
+    // 获取当前周周日(dayIndex=6)盯99999的人作为跨周约束
     String? lastSunday99999;
     for (final day in _currentSchedule!.days) {
       if (day.dayIndex == 6) {
@@ -554,15 +843,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final solver = SimpleScheduleSolver(
       names: _names,
-      userRestDays: _restDays.map(_toSolverDay).toList(),
+      userRestDays: nextWeekRestDays.map(_toSolverDay).toList(),
       closingDay: _toSolverDay(_closingDay),
       lastSunday99999: lastSunday99999,
     );
 
-    final schedule = solver.solve(nextMonday, offset: _refreshOffset);
+    final schedule = solver.solve(nextMonday);
     if (schedule != null) {
+      // 固定下周的休班日
+      final workingDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+      final restIndices = workingDays.map((di) {
+        final day = schedule.days.firstWhere((d) => d.dayIndex == di);
+        return _names.indexOf(day.personRest);
+      }).toList();
+      
       await DatabaseService.saveSchedule(schedule);
-      setState(() => _currentSchedule = schedule);
+      setState(() {
+        _currentSchedule = schedule;
+        _fixedRestPeoplePerDay = restIndices;
+        _hasInitialSolve = true;
+        _refreshOffset = 0;
+        _weekOffset = 1; // 切换到下周
+      });
       await _loadHistory();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
