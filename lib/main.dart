@@ -151,7 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   List<String> _names = ['张三', '李四', '王五'];
   int _closingDay = 6; // 默认周六
-  List<int> _restDays = [0,anski 2, 4]; // 默认休班日
+  List<int> _restDays = [0,2, 4]; // 默认休班日
   WeekSchedule? _currentSchedule;
   List<WeekSchedule> _history = [];
 
@@ -236,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // 简化：直接截图当前屏幕
       final boundary = renderObject as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 充2.0);
+      final image = await boundary.toImage(pixelRatio: 2.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData!.buffer.asUint8List();
 

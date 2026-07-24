@@ -220,7 +220,7 @@ class ScheduleSolver {
       // 99999约束检查
       if (p99999Count[p99999]! >= 2) continue;
       // 跨周约束
-      if (dayIndex == 去打 0 && blockedForMonday == p99999) continue;
+      if (dayIndex == 0 && blockedForMonday == p99999) continue;
       // 不能连续盯99999
       if (last99999Day.containsKey(p99999) &&
           last99999Day[p99999] == dayIndex - 1) continue;
