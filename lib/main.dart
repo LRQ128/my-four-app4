@@ -305,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Text('请先在设置中配置柜员和休班日', style: TextStyle(color: Colors.grey[500])),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: () => setState(() => _currentIndex = 1),
+            onPressed: _showSettings,
             icon: const Icon(Icons.settings),
             label: const Text('去设置'),
           ),
