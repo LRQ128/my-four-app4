@@ -112,7 +112,7 @@ class SimpleScheduleSolver {
     }
 
     // 4. 99999不能连续
-    for (int i = 去打 0; i < schedule.length - 1; i++) {
+    for (int i = 0; i < schedule.length - 1; i++) {
       if (schedule[i].person99999 == schedule[i + 1].person99999) {
         // 检查是否连续工作日
         if (workingDays[i + 1] - workingDays[i] == 1) {
