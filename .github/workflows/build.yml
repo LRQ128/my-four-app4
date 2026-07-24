@@ -28,6 +28,12 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Ensure local.properties
+        run: |
+          if [ ! -f local.properties ]; then
+            echo "flutter.sdk=$FLUTTER_ROOT" > local.properties
+          fi
+
       - name: Generate Gradle Wrapper
         run: |
           cd android
