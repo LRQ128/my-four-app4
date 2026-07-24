@@ -30,9 +30,8 @@ jobs:
 
       - name: Ensure local.properties
         run: |
-          if [ ! -f local.properties ]; then
-            echo "flutter.sdk=$FLUTTER_ROOT" > local.properties
-          fi
+          echo "flutter.sdk=$FLUTTER_ROOT" > local.properties
+          cp local.properties android/local.properties
 
       - name: Generate Gradle Wrapper
         run: |
