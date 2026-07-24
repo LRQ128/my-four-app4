@@ -96,7 +96,7 @@ class ScheduleSolver {
     // 跨周约束：上周日盯99999的人，周一不能盯99999
     String? blockedForMonday;
     if (previousWeek != null) {
-      for (final day in previousWeek.days) {
+      for (final day in previousWeek!.days) {
         if (day.dayIndex == 6) {
           // 周日 (dayIndex=6 means Sunday in previous week's schedule)
           // Actually let me check - dayIndex 0=Monday in our scheme
@@ -244,10 +244,9 @@ class ScheduleSolver {
         if (pRestCount[pRest]! >= 2) continue;
 
         // 如果是用户指定的休班日，必须休息
-        if (restDayIndex == dayIndex && pRest != names[restDays.indexOf(pRest)]) {
-          // 这不是指定休息的人在这一天休息
-          // 需要确保指定休息的人在这一天确实休息
-        }
+        // 指定休班日的人必须休息
+        final designatedPerson = names[restDays.indexOf(dayIndex)];
+        if (restDayIndex == dayIndex && pRest != designatedPerson) continue;
 
         candidates.add([p99999, pXieguan, pRest]);
       }
