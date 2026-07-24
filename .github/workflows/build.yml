@@ -23,21 +23,10 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.9'
-
       - name: Ensure local.properties
         run: |
           echo "flutter.sdk=$FLUTTER_ROOT" > local.properties
           cp local.properties android/local.properties
-
-      - name: Generate Gradle Wrapper
-        run: |
-          cd android
-          gradle wrapper --gradle-version 8.9
-          cd ..
 
       - name: Install dependencies
         run: flutter pub get
