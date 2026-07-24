@@ -184,18 +184,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_history.isNotEmpty) {
       final lastWeek = _history.first;
       for (final day in lastWeek.days) {
-        if (day.dayIndex == 0) {
-          // 周日 (0=周日)
+        if (day.dayIndex == 6) {
+          // 周日(solver中6=周日)
           lastSunday99999 = day.person99999;
           break;
         }
       }
     }
 
+    // 天数映射：设置(0=周日,1=周一...6=周六) → 算法(0=周一...6=周日)
+    int _toSolverDay(int d) => (d + 6) % 7;
+
     final solver = SimpleScheduleSolver(
       names: _names,
-      userRestDays: _restDays,
-      closingDay: _closingDay,
+      userRestDays: _restDays.map(_toSolverDay).toList(),
+      closingDay: _toSolverDay(_closingDay),
       lastSunday99999: lastSunday99999,
     );
 
