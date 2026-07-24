@@ -14,8 +14,8 @@ class SimpleScheduleSolver {
     this.lastSunday99999,
   });
 
-  /// 求解排班表
-  WeekSchedule? solve(DateTime weekStart) {
+  /// 求解排班表，offset可获取不同组合
+  WeekSchedule? solve(DateTime weekStart, {int offset = 0}) {
     // 6个工作日(排除关门日)
     final workingDays = <int>[];
     for (int d = 0; d < 7; d++) {
@@ -33,7 +33,8 @@ class SimpleScheduleSolver {
     final solutions = <WeekSchedule>[];
     _backtrack(0, workingDays, <DaySchedule>[], solutions, weekStart);
 
-    return solutions.isEmpty ? null : solutions.first;
+    if (solutions.isEmpty) return null;
+    return solutions[offset % solutions.length];
   }
 
   void _backtrack(

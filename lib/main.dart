@@ -154,6 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _closingDay = 6; // 默认周六
   List<int> _restDays = [0,2, 4]; // 默认休班日
   WeekSchedule? _currentSchedule;
+  int _refreshOffset = 0;
   List<WeekSchedule> _history = [];
 
   @override
@@ -205,7 +206,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final daysSinceMonday = now.weekday - 1;
     final monday = now.subtract(Duration(days: daysSinceMonday));
 
-    final schedule = solver.solve(monday);
+    final schedule = solver.solve(monday, offset: _refreshOffset);
 
     if (schedule != null) {
       await DatabaseService.saveSchedule(schedule);
@@ -241,12 +242,21 @@ class _HomeScreenState extends State<HomeScreen> {
       final file = File('${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(pngBytes);
 
-      // 分享功能暂不可用
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('排班表已导出'), backgroundColor: Colors.green),
-        );
+      // 保存到手机相册
+      try {
+        const channel = MethodChannel('gallery_saver');
+        await channel.invokeMethod('saveToGallery', {'filePath': file.path});
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('排班表已保存到相册 📸'), backgroundColor: Colors.green),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('保存失败，已保存到临时目录: ${file.path}'), backgroundColor: Colors.orange),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -272,6 +282,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// 天数映射：设置(0=周日,1=周一...6=周六) → 算法(0=周一...6=周日)
   int _toSolverDay(int d) => (d + 6) % 7;
+
+  /// 判断某天某人的休班是否是用户指定的
+  bool _isUserSpecifiedRestDay(int solverDayIndex, String personName) {
+    final personIdx = _names.indexOf(personName);
+    if (personIdx < 0 || personIdx >= _restDays.length) return false;
+    final solverRestDay = _toSolverDay(_restDays[personIdx]);
+    return solverDayIndex == solverRestDay;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -349,10 +367,23 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
-                  TextButton.icon(
-                    onPressed: _generateNextWeek,
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('生成下周'),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          setState(() => _refreshOffset++);
+                          _generateSchedule();
+                        },
+                        icon: const Icon(Icons.refresh, size: 20),
+                        tooltip: '刷新排班组合',
+                      ),
+                      TextButton.icon(
+                        onPressed: _generateNextWeek,
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('生成下周'),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -422,21 +453,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           _buildSlot('🤝 协管', day.personXieguan),
                           const SizedBox(height: 3),
 
-                          // 休班（当天不上班）
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange[100],
-                                  borderRadius: BorderRadius.circular(8),
+                          // 休班（仅用户指定休班日才显示）
+                          if (_isUserSpecifiedRestDay(dayIndex, day.personRest))
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text('休班 ${day.personRest}',
+                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                 ),
-                                child: Text('休班 ${day.personRest}',
-                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
 
                           // 中午休息（上班但午休）
                           if (day.personNoonRest.isNotEmpty)
@@ -527,7 +559,7 @@ class _HomeScreenState extends State<HomeScreen> {
       lastSunday99999: lastSunday99999,
     );
 
-    final schedule = solver.solve(nextMonday);
+    final schedule = solver.solve(nextMonday, offset: _refreshOffset);
     if (schedule != null) {
       await DatabaseService.saveSchedule(schedule);
       setState(() => _currentSchedule = schedule);
