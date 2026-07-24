@@ -23,14 +23,22 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Create Android project files
+      - name: Download Gradle Wrapper
         run: |
-          # 生成必要的Android项目文件
-          flutter create --platforms=android --no-overwrite .
-          # 确保gradle wrapper存在
-          if [ ! -f android/gradlew ]; then
-            cd android && gradle wrapper --gradle-version 8.7 && cd ..
-          fiick
+          mkdir -p android/gradle/wrapper
+          # Download gradle-wrapper.jar
+          curl -L -o android/gradle/wrapper/gradle-wrapper.jar \
+            https://github.com/gradle/gradle/raw/v8.7.0/gradle-wrapper.jar
+          # Create gradle-wrapper.properties
+          echo 'distributionBase=GRADLE_USER_HOME' > android/gradle/wrapper/gradle-wrapper.properties
+          echo 'distributionPath=wrapper/dists' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'zipStoreBase=GRADLE_USER_HOME' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'zipStorePath=wrapper/dists' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'distributionUrl=https://services.gradle.org/distributions/gradle-8.7-all.zip' >> android/gradle/wrapper/gradle-wrapper.properties
+          # Create gradlew script
+          echo '#!/bin/sh' > android/gradlew
+          echo 'exec java -jar "\$(dirname "\$0")/gradle/wrapper/gradle-wrapper.jar" "\$@"' >> android/gradlew
+          chmod +x android/gradlew
 
       - name: Install dependencies
         run: flutter pub get
