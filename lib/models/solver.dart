@@ -71,6 +71,7 @@ class SimpleScheduleSolver {
           person99999: p99999,
           personXieguan: pXieguan,
           personRest: pRest,
+          personNoonRest: p99999, // 盯99999的人中午休息，协管顶替
         ));
 
         _backtrack(idx + 1, workingDays, current, solutions, weekStart);

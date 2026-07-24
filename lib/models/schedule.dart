@@ -2,23 +2,26 @@ import 'dart:collection';
 
 /// 排班表一天的记录
 class DaySchedule {
-  final int dayIndex; // 0=周一...5=周六
+  final int dayIndex; // 0=周一...6=周日
   String person99999; // 盯99999柜台的人
   String personXieguan; // 盯协管的人
-  String personRest; // 休息的人
+  String personRest; // 休班的人（当天不上班）
+  String personNoonRest; // 中午休息的人（上班但午休）
 
   DaySchedule({
     required this.dayIndex,
     required this.person99999,
     required this.personXieguan,
     required this.personRest,
-  });
+    String? personNoonRest,
+  }) : personNoonRest = personNoonRest ?? '';
 
   Map<String, dynamic> toJson() => {
         'dayIndex': dayIndex,
         'person99999': person99999,
         'personXieguan': personXieguan,
         'personRest': personRest,
+        'personNoonRest': personNoonRest,
       };
 
   factory DaySchedule.fromJson(Map<String, dynamic> json) => DaySchedule(
@@ -26,6 +29,7 @@ class DaySchedule {
         person99999: json['person99999'],
         personXieguan: json['personXieguan'],
         personRest: json['personRest'],
+        personNoonRest: json['personNoonRest'] ?? '',
       );
 }
 

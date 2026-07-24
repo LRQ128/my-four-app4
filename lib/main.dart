@@ -148,6 +148,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final GlobalKey _scheduleKey = GlobalKey();
   int _currentIndex = 0;
   List<String> _names = ['张三', '李四', '王五'];
   int _closingDay = 6; // 默认周六
@@ -192,9 +193,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 天数映射：设置(0=周日,1=周一...6=周六) → 算法(0=周一...6=周日)
-    int _toSolverDay(int d) => (d + 6) % 7;
-
     final solver = SimpleScheduleSolver(
       names: _names,
       userRestDays: _restDays.map(_toSolverDay).toList(),
@@ -232,13 +230,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_currentSchedule == null) return;
 
     try {
-      final repaintBoundaryKey = GlobalKey();
-      // 渲染排班表为图片
-      final renderObject = context.findRenderObject();
-      if (renderObject == null) return;
+      final boundary = _scheduleKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
 
-      // 简化：直接截图当前屏幕
-      final boundary = renderObject as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 2.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData!.buffer.asUint8List();
@@ -263,10 +257,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  String getDateRange(WeekSchedule s) {
+    final sorted = s.days.map((d) => d.dayIndex).toList()..sort();
+    if (sorted.isEmpty) return '';
+    final first = s.weekStart.add(Duration(days: sorted.first));
+    final last = s.weekStart.add(Duration(days: sorted.last));
+    return '${first.month}/${first.day} - ${last.month}/${last.day}';
+  }
+
   String _dayName(int dayIndex) {
-    const names = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     return names[dayIndex];
   }
+
+  /// 天数映射：设置(0=周日,1=周一...6=周六) → 算法(0=周一...6=周日)
+  int _toSolverDay(int d) => (d + 6) % 7;
 
   @override
   Widget build(BuildContext context) {
@@ -319,12 +324,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildScheduleView() {
     final schedule = _currentSchedule!;
-    final weekDays = <int>[];
-    for (int d = 0; d < 7; d++) {
-      if (d != schedule.closingDay) weekDays.add(d);
-    }
+    // 从排班数据直接取天数，排除关门日
+        final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
 
-    return SingleChildScrollView(
+    return RepaintBoundary(
+      key: _scheduleKey,
+      child: SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -332,40 +337,61 @@ class _HomeScreenState extends State<HomeScreen> {
           // 标题
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(12),
+              child: Row(
                 children: [
-                  Text(
-                    '本周排班表',
-                    style: Theme.of(context).textTheme.headlineSmall,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('本周排班表', style: Theme.of(context).textTheme.headlineSmall),
+                        Text(getDateRange(schedule), style: TextStyle(color: Colors.grey[600])),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${schedule.weekStart.month}/${schedule.weekStart.day} - ${schedule.weekStart.add(const Duration(days: 5)).month}/${schedule.weekStart.add(const Duration(days: 5)).day}',
-                    style: TextStyle(color: Colors.grey[600]),
+                  TextButton.icon(
+                    onPressed: _generateNextWeek,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('生成下周'),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
-          // 排班表
-          ...weekDays.map((dayIndex) {
-            final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
-            final isToday = DateTime.now().weekday == (dayIndex + 1) % 7;
+          // 水平滚动日历式排班表
+          SizedBox(
+            height: 180,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: weekDays.length,
+              itemBuilder: (context, index) {
+                final dayIndex = weekDays[index];
+                final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
+                final dayDate = schedule.weekStart.add(Duration(days: dayIndex));
+                final today = DateTime.now();
+                final isToday = dayDate.year == today.year &&
+                                dayDate.month == today.month &&
+                                dayDate.day == today.day;
 
-            return Card(
-              color: isToday ? Colors.blue[50] : null,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 48,
+                return Container(
+                  width: 130,
+                  margin: const EdgeInsets.only(right: 8),
+                  child: Card(
+                    color: isToday ? Colors.blue[50] : null,
+                    shape: isToday
+                        ? RoundedRectangleBorder(
+                            side: BorderSide(color: Colors.blue, width: 2),
+                            borderRadius: BorderRadius.circular(12),
+                          )
+                        : null,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
+                          // 日期头
                           Text(
                             _dayName(dayIndex),
                             style: TextStyle(
@@ -374,59 +400,75 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: isToday ? Colors.blue : null,
                             ),
                           ),
+                          Text(
+                            '${dayDate.month}/${dayDate.day}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
                           if (isToday)
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              margin: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                               decoration: BoxDecoration(
                                 color: Colors.blue,
-                                borderRadius: BorderRadius.circular(4),
+                                borderRadius: BorderRadius.circular(8),
                               ),
                               child: const Text('今天', style: TextStyle(color: Colors.white, fontSize: 10)),
+                            ),
+                          const Divider(height: 12),
+
+                          // 人员分配
+                          _buildSlot('🏦 99999', day.person99999),
+                          const SizedBox(height: 3),
+                          _buildSlot('🤝 协管', day.personXieguan),
+                          const SizedBox(height: 3),
+
+                          // 休班（当天不上班）
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange[100],
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text('休班 ${day.personRest}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+
+                          // 中午休息（上班但午休）
+                          if (day.personNoonRest.isNotEmpty)
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.free_breakfast, size: 12, color: Colors.brown[400]),
+                                const SizedBox(width: 2),
+                                Text('午休 ${day.personNoonRest}',
+                                    style: TextStyle(fontSize: 11, color: Colors.brown[600])),
+                              ],
                             ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildRoleRow('🏦 盯99999', day.person99999),
-                          const SizedBox(height: 4),
-                          _buildRoleRow('🤝 盯协管', day.personXieguan),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.orange[50],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        children: [
-                          const Text('休息', style: TextStyle(fontSize: 12, color: Colors.orange)),
-                          Text(day.personRest, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
+                  ),
+                );
+              },
+            ),
+          ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
 
           // 统计
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('本周统计', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   ...schedule.names.map((name) {
                     int count99999 = 0, countXieguan = 0;
                     for (final day in schedule.days) {
@@ -434,10 +476,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (day.personXieguan == name) countXieguan++;
                     }
                     return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 1),
                       child: Row(
                         children: [
-                          SizedBox(width: 60, child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                          SizedBox(width: 64, child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold))),
                           Text('🏦×$count99999  🤝×$countXieguan'),
                         ],
                       ),
@@ -449,16 +491,59 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
-  Widget _buildRoleRow(String label, String name) {
+  Widget _buildSlot(String label, String name) {
     return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SizedBox(width: 80, child: Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 13))),
-        Text(name, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15)),
+        Text('$label ', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+        Text(name, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
       ],
     );
+  }
+
+
+    Future<void> _generateNextWeek() async {
+    if (_currentSchedule == null) return;
+    // 生成本周下周一的日期
+    final nextMonday = _currentSchedule!.weekStart.add(const Duration(days: 7));
+    
+    // 获取上周日(本周六)的排班用于跨周约束
+    String? lastSunday99999;
+    for (final day in _currentSchedule!.days) {
+      if (day.dayIndex == 6) {
+        lastSunday99999 = day.person99999;
+        break;
+      }
+    }
+
+    final solver = SimpleScheduleSolver(
+      names: _names,
+      userRestDays: _restDays.map(_toSolverDay).toList(),
+      closingDay: _toSolverDay(_closingDay),
+      lastSunday99999: lastSunday99999,
+    );
+
+    final schedule = solver.solve(nextMonday);
+    if (schedule != null) {
+      await DatabaseService.saveSchedule(schedule);
+      setState(() => _currentSchedule = schedule);
+      await _loadHistory();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('下周排班已生成！'), backgroundColor: Colors.green),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('排班失败，请检查设置'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _showSettings() {
