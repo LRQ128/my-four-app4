@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:share_plus/share_plus.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 
@@ -245,7 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final file = File('${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(pngBytes);
 
-      await Share.shareXFiles([XFile(file.path)], text: '排班表');
+      // 分享功能暂不可用
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -275,7 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           if (_currentSchedule != null)
             IconButton(
-              icon: const Icon(Icons.share),
+              icon: const Icon(Icons.download),
               onPressed: _exportToImage,
               tooltip: '导出排班表',
             ),

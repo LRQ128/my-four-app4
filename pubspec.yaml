@@ -12,7 +12,6 @@ dependencies:
   cupertino_icons: any
   sqflite: any
   path_provider: any
-  share_plus: any
 
 dev_dependencies:
   flutter_test:
