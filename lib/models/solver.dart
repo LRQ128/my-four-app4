@@ -3,7 +3,7 @@ import 'schedule.dart';
 /// 简化的排班求解器 - 暴力搜索所有可能排列
 class SimpleScheduleSolver {
   final List<String> names;
-  final List<int> userRestDays; // 每人指定的休班日
+  final List<int> userRestDays; // 每人指定的休班日(0=周日...6=周六)
   final int closingDay; // 关门日(0=周日...6=周六)
   final String? lastSunday99999; // 上周日盯99999的人(跨周约束)
 
@@ -26,9 +26,6 @@ class SimpleScheduleSolver {
       throw Exception('工作日数量不对: ${workingDays.length}');
     }
 
-    // 每周第一天(周日)的dayIndex是0
-    // workingDays[0] = 周日, workingDays[1]=周一, ..., workingDays[5]=周五
-
     // 尝试所有可能的排班
     final solutions = <WeekSchedule>[];
     _backtrack(0, workingDays, <DaySchedule>[], solutions, weekStart);
@@ -38,15 +35,18 @@ class SimpleScheduleSolver {
   }
 
   /// 仅求解角色分配（休班日已固定），用于刷新按钮
-  WeekSchedule? solveRolesOnly(DateTime weekStart, List<int> restPeoplePerDay, {int offset = 0}) {
+  WeekSchedule? solveRolesOnly(DateTime weekStart,
+      List<int> restPeoplePerDay, {int offset = 0}) {
     final workingDays = <int>[];
     for (int d = 0; d < 7; d++) {
       if (d != closingDay) workingDays.add(d);
     }
-    
+
     final solutions = <WeekSchedule>[];
-    _backtrackRolesOnly(0, workingDays, restPeoplePerDay, <DaySchedule>[], solutions, weekStart);
-    
+    _backtrackRolesOnly(
+        0, workingDays, restPeoplePerDay, <DaySchedule>[], solutions,
+        weekStart);
+
     if (solutions.isEmpty) return null;
     return solutions[offset % solutions.length];
   }
@@ -84,7 +84,6 @@ class SimpleScheduleSolver {
           person99999: p99999,
           personXieguan: pXieguan,
           personRest: pRest,
-          personNoonRest: p99999,
         ));
 
         _backtrack(idx + 1, workingDays, current, solutions, weekStart);
@@ -98,7 +97,7 @@ class SimpleScheduleSolver {
   void _backtrackRolesOnly(
     int idx,
     List<int> workingDays,
-    List<int> restPeoplePerDay, // 每天休息的人在 names 中的索引
+    List<int> restPeoplePerDay,
     List<DaySchedule> current,
     List<WeekSchedule> solutions,
     DateTime weekStart,
@@ -131,9 +130,10 @@ class SimpleScheduleSolver {
         person99999: workers[i],
         personXieguan: workers[1 - i],
         personRest: restName,
-        personNoonRest: workers[i],
       ));
-      _backtrackRolesOnly(idx + 1, workingDays, restPeoplePerDay, current, solutions, weekStart);
+      _backtrackRolesOnly(
+          idx + 1, workingDays, restPeoplePerDay, current, solutions,
+          weekStart);
       current.removeLast();
       if (solutions.isNotEmpty) return;
     }
@@ -145,7 +145,6 @@ class SimpleScheduleSolver {
     final count99999 = <String, int>{for (var n in names) n: 0};
     final countXieguan = <String, int>{for (var n in names) n: 0};
     final countRest = <String, int>{for (var n in names) n: 0};
-    final last99999Day = <String, int>{};
 
     for (final day in schedule) {
       count99999[day.person99999] = count99999[day.person99999]! + 1;
@@ -171,7 +170,6 @@ class SimpleScheduleSolver {
     // 4. 99999不能连续
     for (int i = 0; i < schedule.length - 1; i++) {
       if (schedule[i].person99999 == schedule[i + 1].person99999) {
-        // 检查是否连续工作日
         if (workingDays[i + 1] - workingDays[i] == 1) {
           return false;
         }
@@ -182,7 +180,6 @@ class SimpleScheduleSolver {
     for (int i = 0; i < names.length; i++) {
       final name = names[i];
       final specifiedRestDay = userRestDays[i];
-      // 检查该人在指定休班日是否确实休息
       bool foundRest = false;
       for (final day in schedule) {
         if (day.dayIndex == specifiedRestDay && day.personRest == name) {
@@ -193,11 +190,10 @@ class SimpleScheduleSolver {
       if (!foundRest) return false;
     }
 
-    // 6. 跨周约束：上周日盯99999的人，周一不能盯99999
+    // 6. 跨周约束：上周日盯99999的人，周一(dayIndex=0)不能盯99999
     if (lastSunday99999 != null) {
-      // 周一 = dayIndex 1 (周日=0)
       for (final day in schedule) {
-        if (day.dayIndex == 1 && day.person99999 == lastSunday99999) {
+        if (day.dayIndex == 0 && day.person99999 == lastSunday99999) {
           return false;
         }
       }
@@ -207,7 +203,8 @@ class SimpleScheduleSolver {
   }
 
   /// 休班天数固定版验证：仅检查 99999/协管约束
-  bool _validateRolesOnly(List<DaySchedule> schedule, List<int> workingDays) {
+  bool _validateRolesOnly(
+      List<DaySchedule> schedule, List<int> workingDays) {
     final count99999 = <String, int>{for (var n in names) n: 0};
     final countXieguan = <String, int>{for (var n in names) n: 0};
 
@@ -234,10 +231,10 @@ class SimpleScheduleSolver {
       }
     }
 
-    // 跨周约束
+    // 跨周约束：上周日盯99999的人，周一(dayIndex=0)不能盯99999
     if (lastSunday99999 != null) {
       for (final day in schedule) {
-        if (day.dayIndex == 1 && day.person99999 == lastSunday99999) {
+        if (day.dayIndex == 0 && day.person99999 == lastSunday99999) {
           return false;
         }
       }

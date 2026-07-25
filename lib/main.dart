@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
 
 import 'models/schedule.dart';
 import 'models/solver.dart';
@@ -152,7 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   List<String> _names = ['张三', '李四', '王五'];
   int _closingDay = 6; // 默认周六
-  List<int> _restDays = [0,2, 4]; // 默认休班日
+  List<int> _restDays = [0, 2, 4]; // 默认休班日
   WeekSchedule? _currentSchedule;
   int _refreshOffset = 0;
   int _weekOffset = 0; // 0=本周, 1=下周, 2=下下周
@@ -191,11 +190,18 @@ class _HomeScreenState extends State<HomeScreen> {
         .add(Duration(days: offset * 7));
   }
 
-  /// 获取上周排班的周日(lastDayIndex=6)盯99999的人
+  /// 获取前一周排班的周日(dayIndex=6)盯99999的人
+  /// _history 按 week_start DESC 排序（最新在前），
+  /// 所以如果有2周以上记录则取 _history[1] 才是真正的上一周
   String? _getLastSunday99999() {
     if (_history.isEmpty) return null;
-    final lastWeek = _history.first;
-    for (final day in lastWeek.days) {
+    final WeekSchedule previousWeek;
+    if (_history.length >= 2) {
+      previousWeek = _history[1];
+    } else {
+      previousWeek = _history.first;
+    }
+    for (final day in previousWeek.days) {
       if (day.dayIndex == 6) return day.person99999;
     }
     return null;
@@ -368,99 +374,78 @@ class _HomeScreenState extends State<HomeScreen> {
     final schedule = _currentSchedule!;
     final exportKey = GlobalKey();
 
-    // 弹窗显示完整排班表，然后截图
-    final captured = await showDialog<bool>(
+    // 弹出预览并截图：直接在本帧结束后截图，不需要二次弹窗
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        insetPadding: const EdgeInsets.all(4),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: RepaintBoundary(
-            key: exportKey,
-            child: _buildExportSchedule(schedule),
-          ),
-        ),
-      ),
-    );
+      builder: (ctx) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          try {
+            final boundary = exportKey.currentContext?.findRenderObject()
+                as RenderRepaintBoundary?;
+            if (boundary == null) return;
 
-    // 弹窗关闭后截图
-    try {
-      // 用延迟方式：重新弹出纯截图用对话框
-      showDialog(
-        context: context,
-        barrierColor: Colors.transparent,
-        builder: (ctx2) {
-          final repaintKey = GlobalKey();
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            final image = await boundary.toImage(pixelRatio: 3.0);
+            final byteData =
+                await image.toByteData(format: ui.ImageByteFormat.png);
+            final pngBytes = byteData!.buffer.asUint8List();
+
+            // 关闭预览弹窗
+            if (ctx.mounted) Navigator.pop(ctx);
+
+            final dir = await getTemporaryDirectory();
+            final file = File(
+                '${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
+            await file.writeAsBytes(pngBytes);
+
+            // 保存到手机相册
             try {
-              final boundary = repaintKey.currentContext?.findRenderObject()
-                  as RenderRepaintBoundary?;
-              if (boundary == null) {
-                Navigator.pop(ctx2);
-                return;
-              }
-
-              final image = await boundary.toImage(pixelRatio: 3.0);
-              final byteData = await image.toByteData(
-                  format: ui.ImageByteFormat.png);
-              final pngBytes = byteData!.buffer.asUint8List();
-
-              Navigator.pop(ctx2);
-
-              final dir = await getTemporaryDirectory();
-              final file = File(
-                  '${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
-              await file.writeAsBytes(pngBytes);
-
-              // 保存到手机相册
-              try {
-                const channel = MethodChannel('gallery_saver');
-                await channel.invokeMethod('saveToGallery',
-                    {'filePath': file.path});
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('✅ 排班表已保存到「相册-排班表」文件夹'),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('✅ 图片已保存到临时目录:\n${file.path}'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
+              const channel = MethodChannel('gallery_saver');
+              await channel
+                  .invokeMethod('saveToGallery', {'filePath': file.path});
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ 排班表已保存到「相册-排班表」文件夹'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
               }
             } catch (e) {
-              Navigator.pop(ctx2);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                      content: Text('导出失败: $e'),
-                      backgroundColor: Colors.red),
+                    content: Text('✅ 图片已保存到临时目录:\n${file.path}'),
+                    backgroundColor: Colors.green,
+                  ),
                 );
               }
             }
-          });
-          return RepaintBoundary(
-            key: repaintKey,
-            child: _buildExportSchedule(schedule),
-          );
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导出失败: $e'), backgroundColor: Colors.red),
+          } catch (e) {
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content: Text('导出失败: $e'),
+                    backgroundColor: Colors.red),
+              );
+            }
+          }
+        });
+
+        return Dialog(
+          insetPadding: const EdgeInsets.all(4),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: RepaintBoundary(
+              key: exportKey,
+              child: _buildExportSchedule(schedule),
+            ),
+          ),
         );
-      }
-    }
+      },
+    );
   }
 
   String getDateRange(WeekSchedule s) {
