@@ -38,6 +38,7 @@ class WeekSchedule {
   final int closingDay; // 关门日 0=周日...6=周六
   final List<int> restDays; // 每人指定的休班日
   final List<DaySchedule> days; // 排班天数
+  int locked; // 0=未固定, 1=已固定
 
   WeekSchedule({
     required this.weekStart,
@@ -45,6 +46,7 @@ class WeekSchedule {
     required this.closingDay,
     required this.restDays,
     required this.days,
+    this.locked = 0,
   });
 
   Map<String, dynamic> toJson() => {
@@ -63,5 +65,6 @@ class WeekSchedule {
         days: (json['days'] as List)
             .map((d) => DaySchedule.fromJson(d))
             .toList(),
+        locked: json['locked'] ?? 0,
       );
 }

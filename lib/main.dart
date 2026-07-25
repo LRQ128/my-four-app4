@@ -45,63 +45,116 @@ class DatabaseService {
   static Future<Database> _initDb() async {
     final dir = await getApplicationDocumentsDirectory();
     final path = '${dir.path}/schedule.db';
-    return await openDatabase(path, version: 1, onCreate: (db, version) async {
-      await db.execute('''
-        CREATE TABLE schedules (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          week_start TEXT NOT NULL,
-          names TEXT NOT NULL,
-          closing_day INTEGER NOT NULL,
-          rest_days TEXT NOT NULL,
-          days_json TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        )
-      ''');
-      await db.execute('''
-        CREATE TABLE settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        )
-      ''');
-    });
+    return await openDatabase(path, version: 2,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_start TEXT NOT NULL,
+            names TEXT NOT NULL,
+            closing_day INTEGER NOT NULL,
+            rest_days TEXT NOT NULL,
+            days_json TEXT NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE schedules ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+        }
+      },
+    );
   }
 
   static Future<void> saveSchedule(WeekSchedule schedule) async {
     final db = await database;
-    await db.insert('schedules', {
-      'week_start': schedule.weekStart.toIso8601String(),
-      'names': schedule.names.join(','),
-      'closing_day': schedule.closingDay,
-      'rest_days': schedule.restDays.join(','),
-      'days_json': DayScheduleEncoder.encodeList(schedule.days),
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    final existing = await db.query('schedules',
+        where: 'week_start = ?',
+        whereArgs: [schedule.weekStart.toIso8601String()]);
+    if (existing.isNotEmpty) {
+      await db.update('schedules', {
+        'names': schedule.names.join(','),
+        'closing_day': schedule.closingDay,
+        'rest_days': schedule.restDays.join(','),
+        'days_json': DayScheduleEncoder.encodeList(schedule.days),
+      }, where: 'week_start = ?',
+          whereArgs: [schedule.weekStart.toIso8601String()]);
+    } else {
+      await db.insert('schedules', {
+        'week_start': schedule.weekStart.toIso8601String(),
+        'names': schedule.names.join(','),
+        'closing_day': schedule.closingDay,
+        'rest_days': schedule.restDays.join(','),
+        'days_json': DayScheduleEncoder.encodeList(schedule.days),
+        'locked': 0,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+  }
+
+  static Future<void> toggleLock(DateTime weekStart, bool locked) async {
+    final db = await database;
+    await db.update('schedules', {'locked': locked ? 1 : 0},
+        where: 'week_start = ?',
+        whereArgs: [weekStart.toIso8601String()]);
+  }
+
+  static Future<bool> isLocked(DateTime weekStart) async {
+    final db = await database;
+    final maps = await db.query('schedules',
+        columns: ['locked'],
+        where: 'week_start = ?',
+        whereArgs: [weekStart.toIso8601String()]);
+    if (maps.isEmpty) return false;
+    return (maps.first['locked'] as int) == 1;
   }
 
   static Future<List<WeekSchedule>> loadSchedules() async {
     final db = await database;
     final maps = await db.query('schedules', orderBy: 'week_start DESC');
+    return maps.map((m) {
+      try {
+        return WeekSchedule(
+          weekStart: DateTime.parse(m['week_start'] as String),
+          names: (m['names'] as String).split(','),
+          closingDay: m['closing_day'] as int,
+          restDays: (m['rest_days'] as String).split(',').map(int.parse).toList(),
+          days: DayScheduleEncoder.decodeList(m['days_json'] as String),
+          locked: (m['locked'] as int?) ?? 0,
+        );
+      } catch (_) {
+        // 兼容旧数据格式
+        return WeekSchedule(
+          weekStart: DateTime.parse(m['week_start'] as String),
+          names: (m['names'] as String).split(','),
+          closingDay: m['closing_day'] as int,
+          restDays: (m['rest_days'] as String).split(',').map(int.parse).toList(),
+          days: DayScheduleEncoder.decodeList(m['days_json'] as String),
+        );
+      }
+    }).toList();
+  }
+
+  static Future<List<WeekSchedule>> loadLockedSchedules() async {
+    final db = await database;
+    final maps = await db.query('schedules',
+        where: 'locked = 1', orderBy: 'week_start DESC');
     return maps.map((m) => WeekSchedule(
       weekStart: DateTime.parse(m['week_start'] as String),
       names: (m['names'] as String).split(','),
       closingDay: m['closing_day'] as int,
       restDays: (m['rest_days'] as String).split(',').map(int.parse).toList(),
       days: DayScheduleEncoder.decodeList(m['days_json'] as String),
+      locked: 1,
     )).toList();
-  }
-
-  static Future<WeekSchedule?> loadLatestSchedule() async {
-    final db = await database;
-    final maps = await db.query('schedules', orderBy: 'week_start DESC', limit: 1);
-    if (maps.isEmpty) return null;
-    final m = maps.first;
-    return WeekSchedule(
-      weekStart: DateTime.parse(m['week_start'] as String),
-      names: (m['names'] as String).split(','),
-      closingDay: m['closing_day'] as int,
-      restDays: (m['rest_days'] as String).split(',').map(int.parse).toList(),
-      days: DayScheduleEncoder.decodeList(m['days_json'] as String),
-    );
   }
 
   static Future<void> saveSetting(String key, String value) async {
@@ -159,6 +212,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<int>? _fixedRestPeoplePerDay; // 固定后的每日休班人索引
   bool _hasInitialSolve = false; // 是否已首次求解
   List<WeekSchedule> _history = [];
+  List<WeekSchedule> _lockedHistory = [];
+  bool _isCurrentLocked = false;
+  WeekSchedule? _viewingHistorySchedule; // 当前查看的历史排班
+  int? _selectedHistoryIndex; // 展开的历史条目索引
 
   @override
   void initState() {
@@ -180,7 +237,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadHistory() async {
     final schedules = await DatabaseService.loadSchedules();
-    setState(() => _history = schedules);
+    final locked = await DatabaseService.loadLockedSchedules();
+    setState(() {
+      _history = schedules;
+      _lockedHistory = locked;
+    });
   }
 
   /// 根据周偏移获取周一日期
@@ -206,6 +267,31 @@ class _HomeScreenState extends State<HomeScreen> {
       if (day.dayIndex == 6) return day.person99999;
     }
     return null;
+  }
+
+  /// 加载当前排班的固定状态
+  Future<void> _loadLockedState(DateTime weekStart) async {
+    final locked = await DatabaseService.isLocked(weekStart);
+    if (mounted) setState(() => _isCurrentLocked = locked);
+  }
+
+  /// 固定/取消固定当前排班
+  Future<void> _toggleLockCurrent() async {
+    if (_currentSchedule == null) return;
+    final newLocked = !_isCurrentLocked;
+    await DatabaseService.toggleLock(
+        _currentSchedule!.weekStart, newLocked);
+    _currentSchedule!.locked = newLocked ? 1 : 0;
+    if (mounted) {
+      setState(() => _isCurrentLocked = newLocked);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(newLocked ? '✅ 已固定该周排班' : '已取消固定'),
+          backgroundColor: newLocked ? Colors.green : Colors.grey,
+        ),
+      );
+    }
+    await _loadHistory();
   }
 
   /// 首次完全求解：确定休班日+角色分配
@@ -236,6 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _refreshOffset = 0;
       });
       await _loadHistory();
+      await _loadLockedState(schedule.weekStart);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -254,7 +341,6 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 刷新：仅重排 99999/协管，保持休班日不变
   Future<void> _refreshSchedule() async {
     if (_currentSchedule == null || _fixedRestPeoplePerDay == null) {
-      // 还没首次求解过，回退到完全求解
       _refreshOffset++;
       await _generateSchedule();
       return;
@@ -270,20 +356,41 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     final monday = _getMonday(_weekOffset);
-    final schedule = solver.solveRolesOnly(monday, _fixedRestPeoplePerDay!, offset: _refreshOffset);
+    final result = solver.solveRolesOnlyWithCount(
+        monday, _fixedRestPeoplePerDay!, offset: _refreshOffset);
+    final schedule = result.key;
+    final totalCount = result.value;
 
     if (schedule != null) {
       await DatabaseService.saveSchedule(schedule);
       setState(() => _currentSchedule = schedule);
       await _loadHistory();
+      await _loadLockedState(schedule.weekStart);
+      if (mounted) {
+        if (totalCount <= 1) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('只此一种组合'), backgroundColor: Colors.orange),
+          );
+          _refreshOffset = 0;
+        } else {
+          final comboIndex = (_refreshOffset % totalCount) + 1;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ 已切换到第 $comboIndex 种组合（共 $totalCount 种）'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
     } else {
-      // 没有更多组合了，回退到完全求解
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('没有更多组合了'), backgroundColor: Colors.orange),
+          const SnackBar(
+              content: Text('没有更多组合了'), backgroundColor: Colors.orange),
         );
       }
-      _refreshOffset--; // 恢复
+      _refreshOffset--;
     }
   }
 
@@ -343,20 +450,48 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    Widget body;
+    String title;
+    switch (_currentIndex) {
+      case 0:
+        title = '排班App';
+        body = _currentSchedule == null ? _buildEmptyState() : _buildScheduleView();
+        break;
+      case 1:
+        title = '设置';
+        body = _buildSettingsView();
+        break;
+      case 2:
+        title = '历史记录';
+        body = _buildHistoryView();
+        break;
+      default:
+        title = '排班App';
+        body = _currentSchedule == null ? _buildEmptyState() : _buildScheduleView();
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('排班App'),
+        title: Text(title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          if (_currentSchedule != null)
+          if (_currentIndex == 0 && _currentSchedule != null) ...[            
+            IconButton(
+              icon: Icon(
+                  _isCurrentLocked ? Icons.lock : Icons.lock_open,
+                  color: _isCurrentLocked ? Colors.green : null),
+              onPressed: _toggleLockCurrent,
+              tooltip: _isCurrentLocked ? '取消固定' : '固定该周',
+            ),
             IconButton(
               icon: const Icon(Icons.download),
               onPressed: _exportToImage,
               tooltip: '导出排班表',
             ),
+          ],
         ],
       ),
-      body: _currentSchedule == null ? _buildEmptyState() : _buildScheduleView(),
+      body: body,
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
@@ -720,6 +855,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _weekOffset = 1; // 切换到下周
       });
       await _loadHistory();
+      await _loadLockedState(schedule.weekStart);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('下周排班已生成！'), backgroundColor: Colors.green),
@@ -734,28 +870,156 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _showSettings() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SettingsScreen(
-          names: List.from(_names),
-          closingDay: _closingDay,
-          restDays: List.from(_restDays),
-          onSave: (names, closingDay, restDays) async {
-            setState(() {
-              _names = names;
-              _closingDay = closingDay;
-              _restDays = restDays;
-            });
-            await DatabaseService.saveSetting('names', names.join(','));
-            await DatabaseService.saveSetting('closing_day', closingDay.toString());
-            await DatabaseService.saveSetting('rest_days', restDays.join(','));
-            _generateSchedule();
-          },
-        ),
-      ),
+  /// 构建设置视图（嵌入排班Tab中）
+  Widget _buildSettingsView() {
+    return SettingsView(
+      names: List.from(_names),
+      closingDay: _closingDay,
+      restDays: List.from(_restDays),
+      onSave: (names, closingDay, restDays) async {
+        setState(() {
+          _names = names;
+          _closingDay = closingDay;
+          _restDays = restDays;
+        });
+        await DatabaseService.saveSetting('names', names.join(','));
+        await DatabaseService.saveSetting('closing_day', closingDay.toString());
+        await DatabaseService.saveSetting('rest_days', restDays.join(','));
+        _currentIndex = 0;
+        _generateSchedule();
+      },
     );
+  }
+
+  /// 构建历史记录视图
+  Widget _buildHistoryView() {
+    if (_lockedHistory.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.history, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('暂无固定排班记录',
+                style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            Text('生成排班后点击🔒按钮固定即可在此查看',
+                style: TextStyle(color: Colors.grey[500])),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _lockedHistory.length,
+      itemBuilder: (context, index) {
+        final s = _lockedHistory[index];
+        final isExpanded = _selectedHistoryIndex == index;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: InkWell(
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _selectedHistoryIndex = null;
+                  _viewingHistorySchedule = null;
+                } else {
+                  _selectedHistoryIndex = index;
+                  _viewingHistorySchedule = s;
+                }
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.lock, size: 16, color: Colors.green),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          getDateRange(s),
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: Colors.grey,
+                      ),
+                    ],
+                  ),
+                  if (isExpanded) ...[                    
+                    const Divider(),
+                    ...s.names.map((name) {
+                      int c9 = 0, cx = 0;
+                      for (final d in s.days) {
+                        if (d.person99999 == name) c9++;
+                        if (d.personXieguan == name) cx++;
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                                width: 64,
+                                child: Text(name,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold))),
+                            Text('99999×$c9  协管×$cx'),
+                          ],
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _currentSchedule = WeekSchedule(
+                              weekStart: s.weekStart,
+                              names: List.from(s.names),
+                              closingDay: s.closingDay,
+                              restDays: List.from(s.restDays),
+                              days: s.days
+                                  .map((d) => DaySchedule(
+                                        dayIndex: d.dayIndex,
+                                        person99999: d.person99999,
+                                        personXieguan: d.personXieguan,
+                                        personRest: d.personRest,
+                                      ))
+                                  .toList(),
+                              locked: s.locked,
+                            );
+                            _isCurrentLocked = true;
+                            _currentIndex = 0;
+                            _selectedHistoryIndex = null;
+                            _viewingHistorySchedule = null;
+                          });
+                        },
+                        icon: const Icon(Icons.visibility, size: 18),
+                        label: const Text('查看此周排班'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showSettings() {
+    _currentIndex = 1;
+    setState(() {});
   }
 }
 
@@ -946,15 +1210,15 @@ class _ExportDialogState extends State<_ExportDialog>
   }
 }
 
-// ============ 设置页面 ============
+// ============ 设置视图（嵌入Tab中） ============
 
-class SettingsScreen extends StatefulWidget {
+class SettingsView extends StatefulWidget {
   final List<String> names;
   final int closingDay;
   final List<int> restDays;
   final Function(List<String>, int, List<int>) onSave;
 
-  const SettingsScreen({
+  const SettingsView({
     super.key,
     required this.names,
     required this.closingDay,
@@ -963,10 +1227,10 @@ class SettingsScreen extends StatefulWidget {
   });
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsView> createState() => _SettingsViewState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsViewState extends State<SettingsView> {
   late List<TextEditingController> _nameControllers;
   late int _closingDay;
   late List<int> _restDays;
@@ -974,7 +1238,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _nameControllers = widget.names.map((n) => TextEditingController(text: n)).toList();
+    _nameControllers =
+        widget.names.map((n) => TextEditingController(text: n)).toList();
     _closingDay = widget.closingDay;
     _restDays = List.from(widget.restDays);
   }
@@ -989,64 +1254,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('设置'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.onSave(
-                _nameControllers.map((c) => c.text).toList(),
-                _closingDay,
-                _restDays,
-              );
-              Navigator.pop(context);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 柜员姓名设置
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('柜员姓名', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  ...List.generate(3, (i) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: TextField(
-                      controller: _nameControllers[i],
-                      decoration: InputDecoration(
-                        labelText: '柜员${i + 1}',
-                        border: const OutlineInputBorder(),
-                      ),
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // 柜员姓名设置
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('柜员姓名',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                ...List.generate(3, (i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: TextField(
+                    controller: _nameControllers[i],
+                    decoration: InputDecoration(
+                      labelText: '柜员${i + 1}',
+                      border: const OutlineInputBorder(),
                     ),
-                  )),
-                ],
-              ),
+                  ),
+                )),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 16),
 
-          // 关门日设置
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('每周关门日', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    value: _closingDay,
-                    decoration: const InputDecoration(border: OutlineInputBorder()),
+        // 关门日设置
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('每周关门日',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: _closingDay,
+                  decoration:
+                      const InputDecoration(border: OutlineInputBorder()),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('周日')),
+                    DropdownMenuItem(value: 1, child: Text('周一')),
+                    DropdownMenuItem(value: 2, child: Text('周二')),
+                    DropdownMenuItem(value: 3, child: Text('周三')),
+                    DropdownMenuItem(value: 4, child: Text('周四')),
+                    DropdownMenuItem(value: 5, child: Text('周五')),
+                    DropdownMenuItem(value: 6, child: Text('周六')),
+                  ],
+                  onChanged: (v) => setState(() => _closingDay = v!),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 休班日设置
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('每人休班日',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                ...List.generate(3, (i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: DropdownButtonFormField<int>(
+                    value: _restDays[i],
+                    decoration: InputDecoration(
+                      labelText: '${_nameControllers[i].text} 休班日',
+                      border: const OutlineInputBorder(),
+                    ),
                     items: const [
                       DropdownMenuItem(value: 0, child: Text('周日')),
                       DropdownMenuItem(value: 1, child: Text('周一')),
@@ -1054,69 +1339,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       DropdownMenuItem(value: 3, child: Text('周三')),
                       DropdownMenuItem(value: 4, child: Text('周四')),
                       DropdownMenuItem(value: 5, child: Text('周五')),
-                      DropdownMenuItem(value: 6, child: Text('周六')),
                     ],
-                    onChanged: (v) => setState(() => _closingDay = v!),
+                    onChanged: (v) => setState(() => _restDays[i] = v!),
                   ),
-                ],
-              ),
+                )),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 24),
 
-          // 休班日设置
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('每人休班日', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  ...List.generate(3, (i) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: DropdownButtonFormField<int>(
-                      value: _restDays[i],
-                      decoration: InputDecoration(
-                        labelText: '${_nameControllers[i].text} 休班日',
-                        border: const OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('周日')),
-                        DropdownMenuItem(value: 1, child: Text('周一')),
-                        DropdownMenuItem(value: 2, child: Text('周二')),
-                        DropdownMenuItem(value: 3, child: Text('周三')),
-                        DropdownMenuItem(value: 4, child: Text('周四')),
-                        DropdownMenuItem(value: 5, child: Text('周五')),
-                      ],
-                      onChanged: (v) => setState(() => _restDays[i] = v!),
-                    ),
-                  )),
-                ],
-              ),
-            ),
+        // 生成排班按钮
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: () {
+              widget.onSave(
+                _nameControllers.map((c) => c.text).toList(),
+                _closingDay,
+                _restDays,
+              );
+            },
+            icon: const Icon(Icons.auto_awesome),
+            label: const Text('保存并生成排班',
+                style: TextStyle(fontSize: 16)),
           ),
-          const SizedBox(height: 24),
-
-          // 生成排班按钮
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                widget.onSave(
-                  _nameControllers.map((c) => c.text).toList(),
-                  _closingDay,
-                  _restDays,
-                );
-                Navigator.pop(context);
-              },
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('保存并生成排班', style: TextStyle(fontSize: 16)),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
