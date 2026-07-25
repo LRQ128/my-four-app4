@@ -288,164 +288,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 构建导出专用完整排班表（非滚动式，所有天在一行）
-  Widget _buildExportSchedule(WeekSchedule schedule) {
-    final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
-    return Container(
-      width: weekDays.length * 155.0 + 32, // 所有天水平排列
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 导出标题
-          Text('排班表 - ${_weekLabel(_weekOffset)}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          Text(getDateRange(schedule),
-              style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-          const SizedBox(height: 12),
-          // 所有天卡水平排列（不滚动）
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: weekDays.map((dayIndex) {
-              final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
-              final dayDate = schedule.weekStart.add(Duration(days: dayIndex));
-              final today = DateTime.now();
-              final isToday = dayDate.year == today.year &&
-                              dayDate.month == today.month &&
-                              dayDate.day == today.day;
-              return Container(
-                width: 140,
-                margin: const EdgeInsets.only(right: 6),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: isToday ? Colors.blue[50] : Colors.grey[50],
-                  border: Border.all(color: isToday ? Colors.blue : Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    Text(_dayName(dayIndex),
-                        style: TextStyle(fontWeight: FontWeight.bold,
-                            fontSize: 14, color: isToday ? Colors.blue : null)),
-                    Text('${dayDate.month}/${dayDate.day}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                    if (isToday)
-                      const Text('📅', style: TextStyle(fontSize: 12)),
-                    const Divider(height: 8),
-                    Text('🏦 ${day.person99999}',
-                        style: const TextStyle(fontSize: 12)),
-                    Text('🤝 ${day.personXieguan}',
-                        style: const TextStyle(fontSize: 12)),
-                    if (_isUserSpecifiedRestDay(dayIndex, day.personRest))
-                      Text('🔴 休班 ${day.personRest}',
-                          style: TextStyle(fontSize: 11, color: Colors.orange[800])),
-                    if (day.personNoonRest.isNotEmpty)
-                      Text('☕ 午休 ${day.personNoonRest}',
-                          style: TextStyle(fontSize: 11, color: Colors.brown[600])),
-                  ],
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 12),
-          // 统计
-          Text('统计',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-          ...schedule.names.map((name) {
-            int c9 = 0, cx = 0;
-            for (final d in schedule.days) {
-              if (d.person99999 == name) c9++;
-              if (d.personXieguan == name) cx++;
-            }
-            return Text('$name: 🏦×$c9  🤝×$cx',
-                style: const TextStyle(fontSize: 12));
-          }),
-        ],
-      ),
-    );
-  }
-
   Future<void> _exportToImage() async {
     if (_currentSchedule == null) return;
 
     final schedule = _currentSchedule!;
-    final exportKey = GlobalKey();
 
-    // 弹出预览并截图：直接在本帧结束后截图，不需要二次弹窗
+    // 用 Builder 包裹确保 context 可用，直接截图后关闭弹窗
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          try {
-            final boundary = exportKey.currentContext?.findRenderObject()
-                as RenderRepaintBoundary?;
-            if (boundary == null) return;
-
-            final image = await boundary.toImage(pixelRatio: 3.0);
-            final byteData =
-                await image.toByteData(format: ui.ImageByteFormat.png);
-            final pngBytes = byteData!.buffer.asUint8List();
-
-            // 关闭预览弹窗
-            if (ctx.mounted) Navigator.pop(ctx);
-
-            final dir = await getTemporaryDirectory();
-            final file = File(
-                '${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
-            await file.writeAsBytes(pngBytes);
-
-            // 保存到手机相册
-            try {
-              const channel = MethodChannel('gallery_saver');
-              await channel
-                  .invokeMethod('saveToGallery', {'filePath': file.path});
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ 排班表已保存到「相册-排班表」文件夹'),
-                    backgroundColor: Colors.green,
-                    duration: Duration(seconds: 3),
-                  ),
-                );
-              }
-            } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('✅ 图片已保存到临时目录:\n${file.path}'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            }
-          } catch (e) {
-            if (ctx.mounted) Navigator.pop(ctx);
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content: Text('导出失败: $e'),
-                    backgroundColor: Colors.red),
-              );
-            }
+      builder: (ctx) => _ExportDialog(
+        schedule: schedule,
+        weekLabel: _weekLabel(_weekOffset),
+        dayName: _dayName,
+        getDateRange: getDateRange,
+        onDone: (success, message) {
+          if (ctx.mounted) Navigator.pop(ctx);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(message),
+                backgroundColor: success ? Colors.green : Colors.red,
+              ),
+            );
           }
-        });
-
-        return Dialog(
-          insetPadding: const EdgeInsets.all(4),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: RepaintBoundary(
-              key: exportKey,
-              child: _buildExportSchedule(schedule),
-            ),
-          ),
-        );
-      },
+        },
+      ),
     );
   }
 
@@ -888,6 +756,193 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+}
+
+// ============ 导出对话框（独立 Widget 保证截图可靠） ============
+
+class _ExportDialog extends StatefulWidget {
+  final WeekSchedule schedule;
+  final String weekLabel;
+  final String Function(int) dayName;
+  final String Function(WeekSchedule) getDateRange;
+  final void Function(bool success, String message) onDone;
+
+  const _ExportDialog({
+    required this.schedule,
+    required this.weekLabel,
+    required this.dayName,
+    required this.getDateRange,
+    required this.onDone,
+  });
+
+  @override
+  State<_ExportDialog> createState() => _ExportDialogState();
+}
+
+class _ExportDialogState extends State<_ExportDialog>
+    with SingleTickerProviderStateMixin {
+  final _exportKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    // 延迟两帧确保布局完成后再截图
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 200), _capture);
+    });
+  }
+
+  Future<void> _capture() async {
+    try {
+      final boundary = _exportKey.currentContext?.findRenderObject();
+      if (boundary == null || boundary is! RenderRepaintBoundary) {
+        widget.onDone(false, '导出失败：无法获取排班表区域');
+        return;
+      }
+      final repaint = boundary as RenderRepaintBoundary;
+      final image = await repaint.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        widget.onDone(false, '导出失败：图片数据为空');
+        return;
+      }
+      final pngBytes = byteData.buffer.asUint8List();
+
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/schedule_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(pngBytes);
+
+      // 保存到手机相册
+      try {
+        const channel = MethodChannel('gallery_saver');
+        await channel.invokeMethod('saveToGallery', {'filePath': file.path});
+        widget.onDone(true, '✅ 排班表已保存到「相册-排班表」文件夹');
+      } catch (_) {
+        widget.onDone(true, '✅ 图片已保存到临时目录:\n${file.path}');
+      }
+    } catch (e) {
+      widget.onDone(false, '导出失败: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final schedule = widget.schedule;
+    final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: RepaintBoundary(
+          key: _exportKey,
+          child: Container(
+            width: weekDays.length * 155.0 + 32,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('排班表 - ${widget.weekLabel}',
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(widget.getDateRange(schedule),
+                    style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: weekDays.map((dayIndex) {
+                    final day = schedule.days
+                        .firstWhere((d) => d.dayIndex == dayIndex);
+                    final dayDate =
+                        schedule.weekStart.add(Duration(days: dayIndex));
+                    final today = DateTime.now();
+                    final isToday = dayDate.year == today.year &&
+                        dayDate.month == today.month &&
+                        dayDate.day == today.day;
+                    return Container(
+                      width: 140,
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isToday ? Colors.blue[50] : Colors.grey[50],
+                        border: Border.all(
+                            color:
+                                isToday ? Colors.blue : Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(widget.dayName(dayIndex),
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                  color: isToday ? Colors.blue : null)),
+                          Text('${dayDate.month}/${dayDate.day}',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500])),
+                          if (isToday)
+                            const Text('📅', style: TextStyle(fontSize: 12)),
+                          const Divider(height: 8),
+                          Text('99999 ${day.person99999}',
+                              style: const TextStyle(fontSize: 12)),
+                          Text('协管 ${day.personXieguan}',
+                              style: const TextStyle(fontSize: 12)),
+                          if (day.personRest.isNotEmpty &&
+                              _isUserRestDay(schedule, dayIndex))
+                            Container(
+                              margin: const EdgeInsets.only(top: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.orange[100],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text('休班 ${day.personRest}',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.orange[800])),
+                            ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                Text('统计',
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.bold)),
+                ...schedule.names.map((name) {
+                  int c9 = 0, cx = 0;
+                  for (final d in schedule.days) {
+                    if (d.person99999 == name) c9++;
+                    if (d.personXieguan == name) cx++;
+                  }
+                  return Text('$name: 99999×$c9  协管×$cx',
+                      style: const TextStyle(fontSize: 12));
+                }),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isUserRestDay(WeekSchedule schedule, int dayIndex) {
+    for (int i = 0; i < schedule.names.length; i++) {
+      if (i < schedule.restDays.length &&
+          schedule.restDays[i] == dayIndex) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
