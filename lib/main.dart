@@ -314,6 +314,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return _names.indexOf(day.personRest);
       }).toList();
       
+      await DatabaseService.saveSetting('rest_days', _restDays.join(','));
       await DatabaseService.saveSchedule(schedule);
       setState(() {
         _currentSchedule = schedule;
@@ -846,8 +847,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return _names.indexOf(day.personRest);
       }).toList();
       
+      await DatabaseService.saveSetting('rest_days', nextWeekRestDays.join(','));
       await DatabaseService.saveSchedule(schedule);
       setState(() {
+        _restDays = nextWeekRestDays; // ← 关键修复：同步更新休班日
         _currentSchedule = schedule;
         _fixedRestPeoplePerDay = restIndices;
         _hasInitialSolve = true;
