@@ -14,7 +14,7 @@ class SimpleScheduleSolver {
     this.lastSunday99999,
   });
 
-  /// 完全求解排班表（休班日+角色分配），offset可获取不同组合
+  /// 完全求解排班表（休班日+角色分配），收集全部解，offset可获取不同完整解
   WeekSchedule? solve(DateTime weekStart, {int offset = 0}) {
     final workingDays = _getWorkingDays();
     if (workingDays.length != 6) {
@@ -24,6 +24,14 @@ class SimpleScheduleSolver {
     _backtrack(0, workingDays, <DaySchedule>[], solutions, weekStart);
     if (solutions.isEmpty) return null;
     return solutions[offset % solutions.length];
+  }
+
+  /// 获取全部合法完整解的数量
+  int countAllSolutions(DateTime weekStart) {
+    final workingDays = _getWorkingDays();
+    final solutions = <WeekSchedule>[];
+    _backtrack(0, workingDays, <DaySchedule>[], solutions, weekStart);
+    return solutions.length;
   }
 
   /// 仅求解角色分配（休班日已固定）—— 收集全部解以支持切换
@@ -82,7 +90,6 @@ class SimpleScheduleSolver {
         ));
         _backtrack(idx + 1, workingDays, current, solutions, weekStart);
         current.removeLast();
-        if (solutions.isNotEmpty) return; // 首次全部求解只取1个解
       }
     }
   }

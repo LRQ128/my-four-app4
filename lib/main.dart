@@ -208,6 +208,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<int> _restDays = [0, 2, 4]; // 默认休班日
   WeekSchedule? _currentSchedule;
   int _refreshOffset = 0;
+  int _fullSolveOffset = 0; // 完整求解的偏移（切换不同休班分配）
+  int _totalFullSolutions = 0; // 全部完整解数量
   int _weekOffset = 0; // 0=本周, 1=下周, 2=下下周
   List<int>? _fixedRestPeoplePerDay; // 固定后的每日休班人索引
   bool _hasInitialSolve = false; // 是否已首次求解
@@ -304,7 +306,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     final monday = _getMonday(_weekOffset);
-    final schedule = solver.solve(monday);
+    final totalAll = solver.countAllSolutions(monday);
+    _totalFullSolutions = totalAll;
+    final schedule = solver.solve(monday, offset: _fullSolveOffset);
 
     if (schedule != null) {
       // 提取每日休班人索引，固定下来
@@ -369,29 +373,61 @@ class _HomeScreenState extends State<HomeScreen> {
       await _loadLockedState(schedule.weekStart);
       if (mounted) {
         if (totalCount <= 1) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('只此一种组合'), backgroundColor: Colors.orange),
-          );
-          _refreshOffset = 0;
+          // 仅1种角色组合时，尝试切换到下一种完整排班方案
+          if (_totalFullSolutions > 1) {
+            _fullSolveOffset++;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('切换到第 ${(_fullSolveOffset % _totalFullSolutions) + 1} 种完整方案（共 $_totalFullSolutions 种）'),
+                backgroundColor: Colors.blue,
+              ),
+            );
+            _refreshOffset = 0;
+            await _generateSchedule();
+            return;
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('只此一种组合'),
+                  backgroundColor: Colors.orange),
+            );
+            _refreshOffset = 0;
+          }
         } else {
           final comboIndex = (_refreshOffset % totalCount) + 1;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✅ 已切换到第 $comboIndex 种组合（共 $totalCount 种）'),
+              content: Text(
+                  '✅ 已切换到第 $comboIndex 种组合（共 $totalCount 种）'),
               backgroundColor: Colors.green,
             ),
           );
         }
       }
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('没有更多组合了'), backgroundColor: Colors.orange),
-        );
+      // roles-only解法为空，切换到下一种完整排班方案
+      if (_totalFullSolutions > 1) {
+        _fullSolveOffset++;
+        _refreshOffset = 0;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('切换到第 ${(_fullSolveOffset % _totalFullSolutions) + 1} 种完整方案（共 $_totalFullSolutions 种）'),
+              backgroundColor: Colors.blue,
+            ),
+          );
+        }
+        await _generateSchedule();
+      } else {
+        _refreshOffset--;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('没有更多组合了'),
+                backgroundColor: Colors.orange),
+          );
+        }
       }
-      _refreshOffset--;
     }
   }
 
@@ -838,7 +874,9 @@ class _HomeScreenState extends State<HomeScreen> {
       lastSunday99999: lastSunday99999,
     );
 
-    final schedule = solver.solve(nextMonday);
+    final totalAll = solver.countAllSolutions(nextMonday);
+    _totalFullSolutions = totalAll;
+    final schedule = solver.solve(nextMonday, offset: _fullSolveOffset);
     if (schedule != null) {
       // 固定下周的休班日
       final workingDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
@@ -850,7 +888,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await DatabaseService.saveSetting('rest_days', nextWeekRestDays.join(','));
       await DatabaseService.saveSchedule(schedule);
       setState(() {
-        _restDays = nextWeekRestDays; // ← 关键修复：同步更新休班日
+        _restDays = nextWeekRestDays;
         _currentSchedule = schedule;
         _fixedRestPeoplePerDay = restIndices;
         _hasInitialSolve = true;
