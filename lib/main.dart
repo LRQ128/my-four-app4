@@ -205,9 +205,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   List<String> _names = ['张三', '李四', '王五'];
   int _closingDay = 6; // 默认周六
-  // 每人2天休班：[李瑞泉_d1, 李瑞泉_d2, 张涵_d1, 张涵_d2, 胡香俭_d1, 胡香俭_d2]
-  // 默认(周六关门)：李瑞泉[周一,周四] 张涵[周二,周五] 胡香俭[周三,周日]
-  List<int> _restDays = [1, 4, 2, 5, 3, 0];
+  // 每人1天指定休班日(0=周日...6=周六)，系统自动补另外1天
+  List<int> _restDays = [0, 2, 4];
   WeekSchedule? _currentSchedule;
   int _refreshOffset = 0;
   int _fullSolveOffset = 0; // 完整求解的偏移（切换不同休班分配）
@@ -240,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final restStr = await DatabaseService.loadSetting('rest_days');
     if (restStr != null) {
       final parts = restStr.split(',').map(int.parse).toList();
-      if (parts.length == 6) { // 6值格式
+      if (parts.length == 3) {
         setState(() => _restDays = parts);
       }
     }
@@ -253,11 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _history = schedules;
       _lockedHistory = locked;
     });
-  }
-
-  /// 从6值_restDays中获取某人的2天休班（设置格式0=周日）
-  List<int> _personRestDays(int personIdx) {
-    return [_restDays[personIdx * 2], _restDays[personIdx * 2 + 1]];
   }
 
   /// 根据周偏移获取周一日期
@@ -491,14 +485,11 @@ class _HomeScreenState extends State<HomeScreen> {
   int _toSolverDay(int d) => (d + 6) % 7;
 
   /// 判断某天某人的休班是否是用户指定的
-  /// 判断某天某人是否是用户指定的休班（6值格式：每人2天）
   bool _isUserSpecifiedRestDay(int solverDayIndex, String personName) {
     final personIdx = _names.indexOf(personName);
-    if (personIdx < 0) return false;
-    final d1 = _restDays[personIdx * 2];
-    final d2 = _restDays[personIdx * 2 + 1];
-    return solverDayIndex == _toSolverDay(d1) ||
-        solverDayIndex == _toSolverDay(d2);
+    if (personIdx < 0 || personIdx >= _restDays.length) return false;
+    final solverRestDay = _toSolverDay(_restDays[personIdx]);
+    return solverDayIndex == solverRestDay;
   }
 
   @override
@@ -818,59 +809,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('为下周每位柜员选择2天休班日（不重复）：',
+                    const Text('为下周每位柜员选择1天休班日（系统自动补另1天）：',
                         style: TextStyle(fontSize: 14)),
                     const SizedBox(height: 16),
                     ...List.generate(_names.length, (i) {
-                      final dayNames = ['周日','周一','周二','周三','周四','周五','周六'];
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(_names[i],
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: DropdownButtonFormField<int>(
-                                    value: newRestDays[i * 2],
-                                    decoration: const InputDecoration(
-                                      labelText: '休班日1',
-                                      border: OutlineInputBorder(),
-                                      isDense: true,
-                                    ),
-                                    items: [0,1,2,3,4,5]
-                                      .map((d) => DropdownMenuItem(
-                                          value: d, child: Text(dayNames[d])))
-                                      .toList(),
-                                    onChanged: (v) {
-                                      setDialogState(() => newRestDays[i * 2] = v!);
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: DropdownButtonFormField<int>(
-                                    value: newRestDays[i * 2 + 1],
-                                    decoration: const InputDecoration(
-                                      labelText: '休班日2',
-                                      border: OutlineInputBorder(),
-                                      isDense: true,
-                                    ),
-                                    items: [0,1,2,3,4,5]
-                                      .map((d) => DropdownMenuItem(
-                                          value: d, child: Text(dayNames[d])))
-                                      .toList(),
-                                    onChanged: (v) {
-                                      setDialogState(() => newRestDays[i * 2 + 1] = v!);
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: DropdownButtonFormField<int>(
+                          value: newRestDays[i],
+                          decoration: InputDecoration(
+                            labelText: '${_names[i]} 休班日',
+                            border: const OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 0, child: Text('周日')),
+                            DropdownMenuItem(value: 1, child: Text('周一')),
+                            DropdownMenuItem(value: 2, child: Text('周二')),
+                            DropdownMenuItem(value: 3, child: Text('周三')),
+                            DropdownMenuItem(value: 4, child: Text('周四')),
+                            DropdownMenuItem(value: 5, child: Text('周五')),
                           ],
+                          onChanged: (v) {
+                            setDialogState(() => newRestDays[i] = v!);
+                          },
                         ),
                       );
                     }),
@@ -1288,11 +1249,11 @@ class _ExportDialogState extends State<_ExportDialog>
   }
 
   bool _isUserRestDay(WeekSchedule schedule, int dayIndex) {
-    // restDays 现在是6值: [p1_d1, p1_d2, p2_d1, p2_d2, p3_d1, p3_d2]
     for (int i = 0; i < schedule.names.length; i++) {
-      final d1 = schedule.restDays[i * 2];
-      final d2 = schedule.restDays[i * 2 + 1];
-      if (d1 == dayIndex || d2 == dayIndex) return true;
+      if (i < schedule.restDays.length &&
+          schedule.restDays[i] == dayIndex) {
+        return true;
+      }
     }
     return false;
   }
@@ -1321,7 +1282,7 @@ class SettingsView extends StatefulWidget {
 class _SettingsViewState extends State<SettingsView> {
   late List<TextEditingController> _nameControllers;
   late int _closingDay;
-  late List<int> _restDays; // [p1_d1, p1_d2, p2_d1, p2_d2, p3_d1, p3_d2]
+  late List<int> _restDays;
 
   @override
   void initState() {
@@ -1340,18 +1301,8 @@ class _SettingsViewState extends State<SettingsView> {
     super.dispose();
   }
 
-  /// 工作日内可选休班日（设置格式）
-  List<int> _availableRestDays() {
-    return [0, 1, 2, 3, 4, 5] // 周日~周五，排除周六关门
-        .where((d) => d != _closingDay)
-        .toList();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final availDays = _availableRestDays();
-    final dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -1412,62 +1363,33 @@ class _SettingsViewState extends State<SettingsView> {
         ),
         const SizedBox(height: 16),
 
-        // 休班日设置（每人2天）
+        // 休班日设置（每人1天指定休班，系统自动补另1天）
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('每人2天休班日',
+                Text('每人1天指定休班日',
                     style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 ...List.generate(3, (i) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(_nameControllers[i].text,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              value: _restDays[i * 2],
-                              decoration: const InputDecoration(
-                                labelText: '休班日1',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                              items: availDays.map((d) =>
-                                DropdownMenuItem(value: d, child: Text(dayNames[d]))
-                              ).toList(),
-                              onChanged: (v) {
-                                setState(() => _restDays[i * 2] = v!);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              value: _restDays[i * 2 + 1],
-                              decoration: const InputDecoration(
-                                labelText: '休班日2',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                              items: availDays.map((d) =>
-                                DropdownMenuItem(value: d, child: Text(dayNames[d]))
-                              ).toList(),
-                              onChanged: (v) {
-                                setState(() => _restDays[i * 2 + 1] = v!);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: DropdownButtonFormField<int>(
+                    value: _restDays[i],
+                    decoration: InputDecoration(
+                      labelText: '${_nameControllers[i].text} 休班日',
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('周日')),
+                      DropdownMenuItem(value: 1, child: Text('周一')),
+                      DropdownMenuItem(value: 2, child: Text('周二')),
+                      DropdownMenuItem(value: 3, child: Text('周三')),
+                      DropdownMenuItem(value: 4, child: Text('周四')),
+                      DropdownMenuItem(value: 5, child: Text('周五')),
                     ],
+                    onChanged: (v) => setState(() => _restDays[i] = v!),
                   ),
                 )),
               ],

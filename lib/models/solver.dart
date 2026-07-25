@@ -1,11 +1,11 @@
 import 'schedule.dart';
 
-/// 排班求解器 - 每个柜员的2天休班均由用户指定，系统只分配99999/协管
+/// 排班求解器 - 每人1天指定休班，系统自动补另1天，不重复
 class SimpleScheduleSolver {
   final List<String> names;
-  final List<int> userRestDays; // [p1_d1, p1_d2, p2_d1, p2_d2, p3_d1, p3_d2]
-  final int closingDay; // 算法格式 0=周一...6=周日
-  final String? lastSunday99999; // 上周日盯99999的人(跨周约束)
+  final List<int> userRestDays; // 每人指定的1天休班(算法格式0=周一...6=周日)
+  final int closingDay; // 关门日(算法格式)
+  final String? lastSunday99999;
 
   SimpleScheduleSolver({
     required this.names,
@@ -13,39 +13,6 @@ class SimpleScheduleSolver {
     this.closingDay = 6,
     this.lastSunday99999,
   });
-
-  /// 验证用户设定的休班日是否合法
-  /// 每人恰好2天，不能重复，6天覆盖全部工作日
-  bool validateRestDays(DateTime weekStart) {
-    final workingDays = _getWorkingDays();
-    
-    // 每人必须恰好有2天休班
-    for (int i = 0; i < names.length; i++) {
-      final d1 = userRestDays[i * 2];
-      final d2 = userRestDays[i * 2 + 1];
-      if (d1 == d2) return false; // 同一天不能休班2次
-      if (!workingDays.contains(d1) || !workingDays.contains(d2)) return false; // 必须在工作日内
-    }
-
-    // 6个休班日必须覆盖全部6个工作日（每人2天）
-    final allRest = <int>{...userRestDays};
-    if (allRest.length != 6) return false;
-    for (final d in workingDays) {
-      if (!allRest.contains(d)) return false;
-    }
-
-    return true;
-  }
-
-  /// 构建restPeoplePerDay：每个工作日的休班人索引
-  List<int> _buildRestPerDay(List<int> workingDays) {
-    return workingDays.map((di) {
-      for (int i = 0; i < names.length; i++) {
-        if (userRestDays[i * 2] == di || userRestDays[i * 2 + 1] == di) return i;
-      }
-      return 0; // 不应走到这里
-    }).toList();
-  }
 
   List<int> _getWorkingDays() {
     final days = <int>[];
@@ -55,21 +22,67 @@ class SimpleScheduleSolver {
     return days;
   }
 
-  /// 求解排班，所有休班日已由用户指定，只分配99999/协管
-  /// 返回 [schedule, totalCount]
+  /// 完整求解：收集全部合法排班方案
   MapEntry<WeekSchedule?, int> solveWithCount(DateTime weekStart, {int offset = 0}) {
-    if (!validateRestDays(weekStart)) return MapEntry(null, 0);
-
     final workingDays = _getWorkingDays();
-    final restPerDay = _buildRestPerDay(workingDays);
-    final solutions = <WeekSchedule>[];
-    _backtrack(0, workingDays, restPerDay, <DaySchedule>[], solutions, weekStart);
+    if (workingDays.length != 6) return MapEntry(null, 0);
 
-    if (solutions.isEmpty) return MapEntry(null, 0);
-    return MapEntry(solutions[offset % solutions.length], solutions.length);
+    // 需要自动分配的休班日（未被用户指定的工作日）
+    final autoDays = <int>[];
+    final specified = <int>{...userRestDays};
+    for (final d in workingDays) {
+      if (!specified.contains(d)) autoDays.add(d);
+    }
+    if (autoDays.length != 3) return MapEntry(null, 0);
+
+    final allSolutions = <WeekSchedule>[];
+    _enumRestAssign(0, autoDays, <int>[], allSolutions, workingDays, weekStart);
+    if (allSolutions.isEmpty) return MapEntry(null, 0);
+    return MapEntry(allSolutions[offset % allSolutions.length], allSolutions.length);
   }
 
-  void _backtrack(
+  /// 枚举3个自动休班日分配给3个人的全排列
+  void _enumRestAssign(
+    int idx,
+    List<int> autoDays,
+    List<int> assigned, // assigned[pIdx] = autoDayIndex
+    List<WeekSchedule> allSolutions,
+    List<int> workingDays,
+    DateTime weekStart,
+  ) {
+    if (idx >= 3) {
+      // 构建 restPerDay：[每个工作日的休班人索引]
+      final restPerDay = <int>[];
+      for (final d in workingDays) {
+        int? p;
+        for (int i = 0; i < 3; i++) {
+          if (userRestDays[i] == d) { p = i; break; }
+        }
+        if (p == null) {
+          for (int i = 0; i < 3; i++) {
+            if (autoDays[assigned[i]] == d) { p = i; break; }
+          }
+        }
+        restPerDay.add(p!);
+      }
+
+      _enumRoles(0, workingDays, restPerDay, <DaySchedule>[],
+          allSolutions, weekStart);
+      return;
+    }
+
+    for (int p = 0; p < 3; p++) {
+      if (assigned.contains(p)) continue; // 每人只能1天自动休班
+      if (userRestDays[p] == autoDays[idx]) continue; // 不能和指定休班冲突
+      assigned.add(p);
+      _enumRestAssign(idx + 1, autoDays, assigned, allSolutions,
+          workingDays, weekStart);
+      assigned.removeLast();
+    }
+  }
+
+  /// 固定休班分配下，枚举99999/协管
+  void _enumRoles(
     int idx,
     List<int> workingDays,
     List<int> restPerDay,
@@ -83,7 +96,7 @@ class SimpleScheduleSolver {
           weekStart: weekStart,
           names: List.from(names),
           closingDay: closingDay,
-          restDays: List.from(userRestDays),
+          restDays: List.from(userRestDays), // 只需保留指定的3天
           days: List.from(current),
         ));
       }
@@ -97,7 +110,6 @@ class SimpleScheduleSolver {
       if (n != restName) workers.add(n);
     }
 
-    // 2种分配：workers[0]=99999, workers[1]=协管 或 反过来
     for (int i = 0; i < 2; i++) {
       current.add(DaySchedule(
         dayIndex: dayIndex,
@@ -105,12 +117,11 @@ class SimpleScheduleSolver {
         personXieguan: workers[1 - i],
         personRest: restName,
       ));
-      _backtrack(idx + 1, workingDays, restPerDay, current, solutions, weekStart);
+      _enumRoles(idx + 1, workingDays, restPerDay, current, solutions, weekStart);
       current.removeLast();
     }
   }
 
-  /// 验证：每人2天99999、2天协管、同人99999不连续、跨周约束
   bool _validate(List<DaySchedule> schedule, List<int> workingDays) {
     final count99999 = <String, int>{for (var n in names) n: 0};
     final countXieguan = <String, int>{for (var n in names) n: 0};
@@ -127,14 +138,12 @@ class SimpleScheduleSolver {
       if (countXieguan[name] != 2) return false;
     }
 
-    // 同人99999不能连续日历工作日
     for (int i = 0; i < schedule.length - 1; i++) {
       if (schedule[i].person99999 == schedule[i + 1].person99999) {
         if (workingDays[i + 1] - workingDays[i] == 1) return false;
       }
     }
 
-    // 跨周约束：上周日盯99999的人，周一不能盯
     if (lastSunday99999 != null) {
       for (final day in schedule) {
         if (day.dayIndex == 0 && day.person99999 == lastSunday99999) {
