@@ -62,7 +62,11 @@ class SimpleScheduleSolver {
 
     if (force99999 != null || forceXieguan != null) {
       String p99999, pXieguan;
-      if (force99999 != null) {
+      if (force99999 != null && forceXieguan != null) {
+        // 用户同时指定了两个人，直接使用
+        p99999 = force99999;
+        pXieguan = forceXieguan;
+      } else if (force99999 != null) {
         p99999 = force99999;
         pXieguan = workers.firstWhere((w) => w != force99999);
       } else {
