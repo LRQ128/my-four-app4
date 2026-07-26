@@ -352,6 +352,40 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// 加载已有排班（优先从历史记录加载，没有则重新生成）
+  Future<void> _loadScheduleForWeek() async {
+    final monday = _getMonday(_weekOffset);
+
+    // 查锁定记录
+    for (final s in _lockedHistory) {
+      if (s.weekStart.year == monday.year &&
+          s.weekStart.month == monday.month &&
+          s.weekStart.day == monday.day) {
+        setState(() {
+          _currentSchedule = s;
+          _isCurrentLocked = true;
+        });
+        return;
+      }
+    }
+
+    // 查普通历史记录
+    for (final s in _history) {
+      if (s.weekStart.year == monday.year &&
+          s.weekStart.month == monday.month &&
+          s.weekStart.day == monday.day) {
+        setState(() {
+          _currentSchedule = s;
+          _isCurrentLocked = false;
+        });
+        return;
+      }
+    }
+
+    // 没有历史记录，重新生成
+    await _generateSchedule();
+  }
+
   /// 弹出角色指定输入框
   Future<void> _showRefreshDialog() async {
     if (_currentSchedule == null) return;
@@ -790,7 +824,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onChanged: (v) {
                             int newOffset = v == '本周' ? 0 : (v == '下周' ? 1 : 2);
                             setState(() => _weekOffset = newOffset);
-                            _generateSchedule();
+                            _loadScheduleForWeek();
                           },
                         ),
                       ),
