@@ -219,6 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isCurrentLocked = false;
   WeekSchedule? _viewingHistorySchedule; // 当前查看的历史排班
   int? _selectedHistoryIndex; // 展开的历史条目索引
+  Map<int, Map<String, String>> _lastRefreshInputs = {}; // 上次刷新填写的记忆
 
   @override
   void initState() {
@@ -358,13 +359,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final schedule = _currentSchedule!;
     final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
 
-    // 创建每个日期每项的控制器（预填当前值）
+    // 创建每个日期每项的控制器（默认空，有记忆则填上记忆的值）
     final controllers = <int, Map<String, TextEditingController>>{};
     for (final dayIndex in weekDays) {
-      final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
+      final saved = _lastRefreshInputs[dayIndex];
       controllers[dayIndex] = {
-        '99999': TextEditingController(text: day.person99999),
-        '协管': TextEditingController(text: day.personXieguan),
+        '99999': TextEditingController(text: saved?['99999'] ?? ''),
+        '协管': TextEditingController(text: saved?['协管'] ?? ''),
       };
     }
 
@@ -545,14 +546,21 @@ class _HomeScreenState extends State<HomeScreen> {
                         constraints[dayIndex] = constraint;
                       }
                     }
-                    if (constraints.isEmpty) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
-                          content: Text('请至少填写一项约束'),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      return;
+                    // 保存本次填写到记忆
+                    _lastRefreshInputs = {};
+                    for (final dayIndex in weekDays) {
+                      final v99999 = controllers[dayIndex]!['99999']!
+                          .text
+                          .trim();
+                      final vXieguan = controllers[dayIndex]!['协管']!
+                          .text
+                          .trim();
+                      final saved = <String, String>{};
+                      if (v99999.isNotEmpty) saved['99999'] = v99999;
+                      if (vXieguan.isNotEmpty) saved['协管'] = vXieguan;
+                      if (saved.isNotEmpty) {
+                        _lastRefreshInputs[dayIndex] = saved;
+                      }
                     }
                     Navigator.pop(ctx, constraints);
                   },
