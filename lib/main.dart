@@ -354,6 +354,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 加载已有排班（优先从历史记录加载，没有则重新生成）
+  /// 从 WeekSchedule 重建 _fixedRestPeoplePerDay
+  void _rebuildFixedRest(WeekSchedule schedule) {
+    final workingDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+    final restIndices = workingDays.map((di) {
+      final day = schedule.days.firstWhere((d) => d.dayIndex == di);
+      return _names.indexOf(day.personRest);
+    }).toList();
+    _fixedRestPeoplePerDay = restIndices;
+  }
+
   Future<void> _loadScheduleForWeek() async {
     final monday = _getMonday(_weekOffset);
 
@@ -362,6 +372,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (s.weekStart.year == monday.year &&
           s.weekStart.month == monday.month &&
           s.weekStart.day == monday.day) {
+        _rebuildFixedRest(s);
         setState(() {
           _currentSchedule = s;
           _isCurrentLocked = true;
@@ -375,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (s.weekStart.year == monday.year &&
           s.weekStart.month == monday.month &&
           s.weekStart.day == monday.day) {
+        _rebuildFixedRest(s);
         setState(() {
           _currentSchedule = s;
           _isCurrentLocked = false;
@@ -617,7 +629,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 按用户填写的约束重新求解角色分配
   Future<void> _applyConstraints(
       Map<int, Map<String, String?>> constraints) async {
-    if (_currentSchedule == null || _fixedRestPeoplePerDay == null) return;
+    if (_currentSchedule == null || _fixedRestPeoplePerDay == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ 缺少排班数据，请先生成排班再刷新'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
     final schedule = _currentSchedule!;
     final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
