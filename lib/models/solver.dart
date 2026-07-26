@@ -7,6 +7,92 @@ class SimpleScheduleSolver {
   final int closingDay; // 关门日(算法格式)
   final String? lastSunday99999;
 
+  /// 在固定休班分配下，按用户约束求解 99999/协管
+  /// [restPerDay]: 每个工作日的休班人索引，与 workingDays 顺序一致
+  /// [constraints]: { dayIndex: { '99999': personName?, '协管': personName? } }
+  WeekSchedule? solveWithFixedRestAndConstraints(
+    DateTime weekStart,
+    List<int> restPerDay,
+    List<int> workingDays,
+    Map<int, Map<String, String?>> constraints,
+  ) {
+    final solutions = <WeekSchedule>[];
+    _enumRolesWithConstraints(0, workingDays, restPerDay, <DaySchedule>[],
+        solutions, weekStart, constraints);
+    return solutions.isNotEmpty ? solutions.first : null;
+  }
+
+  void _enumRolesWithConstraints(
+    int idx,
+    List<int> workingDays,
+    List<int> restPerDay,
+    List<DaySchedule> current,
+    List<WeekSchedule> solutions,
+    DateTime weekStart,
+    Map<int, Map<String, String?>> constraints,
+  ) {
+    if (idx >= workingDays.length) {
+      if (_validate(current, workingDays)) {
+        solutions.add(WeekSchedule(
+          weekStart: weekStart,
+          names: List.from(names),
+          closingDay: closingDay,
+          restDays: List.from(userRestDays),
+          days: List.from(current),
+        ));
+      }
+      return;
+    }
+
+    final dayIndex = workingDays[idx];
+    final restName = names[restPerDay[idx]];
+    final workers = <String>[];
+    for (final n in names) {
+      if (n != restName) workers.add(n);
+    }
+
+    final dayConstraint = constraints[dayIndex];
+    final force99999 = dayConstraint?['99999'];
+    final forceXieguan = dayConstraint?['协管'];
+
+    // 约束可行性检查
+    if (force99999 != null && !workers.contains(force99999)) return;
+    if (forceXieguan != null && !workers.contains(forceXieguan)) return;
+    if (force99999 != null && forceXieguan != null && force99999 == forceXieguan) return;
+
+    if (force99999 != null || forceXieguan != null) {
+      String p99999, pXieguan;
+      if (force99999 != null) {
+        p99999 = force99999;
+        pXieguan = workers.firstWhere((w) => w != force99999);
+      } else {
+        pXieguan = forceXieguan!;
+        p99999 = workers.firstWhere((w) => w != forceXieguan);
+      }
+      current.add(DaySchedule(
+        dayIndex: dayIndex,
+        person99999: p99999,
+        personXieguan: pXieguan,
+        personRest: restName,
+      ));
+      _enumRolesWithConstraints(idx + 1, workingDays, restPerDay, current,
+          solutions, weekStart, constraints);
+      current.removeLast();
+    } else {
+      for (int i = 0; i < 2; i++) {
+        current.add(DaySchedule(
+          dayIndex: dayIndex,
+          person99999: workers[i],
+          personXieguan: workers[1 - i],
+          personRest: restName,
+        ));
+        _enumRolesWithConstraints(idx + 1, workingDays, restPerDay, current,
+            solutions, weekStart, constraints);
+        current.removeLast();
+      }
+    }
+  }
+
   SimpleScheduleSolver({
     required this.names,
     required this.userRestDays,

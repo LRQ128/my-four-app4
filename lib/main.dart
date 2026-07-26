@@ -351,15 +351,233 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// 刷新：仅重排 99999/协管，保持休班日不变
-  Future<void> _refreshSchedule() async {
-    if (_currentSchedule == null || _fixedRestPeoplePerDay == null) {
-      _refreshOffset++;
-      await _generateSchedule();
-      return;
+  /// 弹出角色指定输入框
+  Future<void> _showRefreshDialog() async {
+    if (_currentSchedule == null) return;
+
+    final schedule = _currentSchedule!;
+    final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
+
+    // 创建每个日期每项的控制器（预填当前值）
+    final controllers = <int, Map<String, TextEditingController>>{};
+    for (final dayIndex in weekDays) {
+      final day = schedule.days.firstWhere((d) => d.dayIndex == dayIndex);
+      controllers[dayIndex] = {
+        '99999': TextEditingController(text: day.person99999),
+        '协管': TextEditingController(text: day.personXieguan),
+      };
     }
 
-    _refreshOffset++;
+    final result = await showDialog<Map<int, Map<String, String?>>>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.edit_note, size: 22),
+                  SizedBox(width: 8),
+                  Text('手动指定角色'),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '填写你想指定的人员到对应格子里，留空则由系统自动分配',
+                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 12),
+                      // 表头
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 8, horizontal: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                                width: 54,
+                                child: Text('日期',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.bold))),
+                            const Expanded(
+                                child: Text('🏦 99999',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.bold))),
+                            const Expanded(
+                                child: Text('🤝 协管',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.bold))),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...weekDays.map((dayIndex) {
+                        final day = schedule.days
+                            .firstWhere((d) => d.dayIndex == dayIndex);
+                        final dayDate =
+                            schedule.weekStart.add(Duration(days: dayIndex));
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 54,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Text(_dayName(dayIndex),
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13)),
+                                    Text('${dayDate.month}/${dayDate.day}',
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.grey[500])),
+                                    if (_isUserSpecifiedRestDay(
+                                        dayIndex, day.personRest))
+                                      Container(
+                                        margin:
+                                            const EdgeInsets.only(top: 2),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange[100],
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text('休${day.personRest}',
+                                            style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.orange[800])),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 42,
+                                  child: TextField(
+                                    controller:
+                                        controllers[dayIndex]!['99999'],
+                                    decoration: const InputDecoration(
+                                      hintText: '谁盯99999',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 8),
+                                      isDense: true,
+                                    ),
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 42,
+                                  child: TextField(
+                                    controller:
+                                        controllers[dayIndex]!['协管'],
+                                    decoration: const InputDecoration(
+                                      hintText: '谁协管',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 8),
+                                      isDense: true,
+                                    ),
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final constraints =
+                        <int, Map<String, String?>>{};
+                    for (final dayIndex in weekDays) {
+                      final v99999 = controllers[dayIndex]!['99999']!
+                          .text
+                          .trim();
+                      final vXieguan = controllers[dayIndex]!['协管']!
+                          .text
+                          .trim();
+
+                      for (final entry in [{'role': '99999', 'name': v99999},
+                          {'role': '协管', 'name': vXieguan}]) {
+                        if (entry['name']!.isNotEmpty &&
+                            !_names.contains(entry['name'])) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '"${entry['name']}" 不是当前柜员！'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          return;
+                        }
+                      }
+
+                      final constraint = <String, String?>{};
+                      if (v99999.isNotEmpty) constraint['99999'] = v99999;
+                      if (vXieguan.isNotEmpty) constraint['协管'] = vXieguan;
+                      if (constraint.isNotEmpty) {
+                        constraints[dayIndex] = constraint;
+                      }
+                    }
+                    if (constraints.isEmpty) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text('请至少填写一项约束'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.pop(ctx, constraints);
+                  },
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text('确定刷新'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null) {
+      await _applyConstraints(result);
+    }
+  }
+
+  /// 按用户填写的约束重新求解角色分配
+  Future<void> _applyConstraints(
+      Map<int, Map<String, String?>> constraints) async {
+    if (_currentSchedule == null || _fixedRestPeoplePerDay == null) return;
+
+    final schedule = _currentSchedule!;
+    final weekDays = schedule.days.map((d) => d.dayIndex).toList()..sort();
 
     final solver = SimpleScheduleSolver(
       names: _names,
@@ -368,72 +586,34 @@ class _HomeScreenState extends State<HomeScreen> {
       lastSunday99999: _getLastSunday99999(),
     );
 
-    final monday = _getMonday(_weekOffset);
-    final result = solver.solveWithCount(monday, offset: _refreshOffset);
-    final schedule = result.key;
-    final totalCount = result.value;
+    final newSchedule = solver.solveWithFixedRestAndConstraints(
+      schedule.weekStart,
+      _fixedRestPeoplePerDay!,
+      weekDays,
+      constraints,
+    );
 
-    if (schedule != null) {
-      await DatabaseService.saveSchedule(schedule);
-      setState(() => _currentSchedule = schedule);
+    if (newSchedule != null) {
+      await DatabaseService.saveSchedule(newSchedule);
+      setState(() => _currentSchedule = newSchedule);
       await _loadHistory();
-      await _loadLockedState(schedule.weekStart);
+      await _loadLockedState(newSchedule.weekStart);
       if (mounted) {
-        if (totalCount <= 1) {
-          // 仅1种角色组合时，尝试切换到下一种完整排班方案
-          if (_totalFullSolutions > 1) {
-            _fullSolveOffset++;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('切换到第 ${(_fullSolveOffset % _totalFullSolutions) + 1} 种完整方案（共 $_totalFullSolutions 种）'),
-                backgroundColor: Colors.blue,
-              ),
-            );
-            _refreshOffset = 0;
-            await _generateSchedule();
-            return;
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('只此一种组合'),
-                  backgroundColor: Colors.orange),
-            );
-            _refreshOffset = 0;
-          }
-        } else {
-          final comboIndex = (_refreshOffset % totalCount) + 1;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                  '✅ 已切换到第 $comboIndex 种组合（共 $totalCount 种）'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 组合已切换'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     } else {
-      // roles-only解法为空，切换到下一种完整排班方案
-      if (_totalFullSolutions > 1) {
-        _fullSolveOffset++;
-        _refreshOffset = 0;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('切换到第 ${(_fullSolveOffset % _totalFullSolutions) + 1} 种完整方案（共 $_totalFullSolutions 种）'),
-              backgroundColor: Colors.blue,
-            ),
-          );
-        }
-        await _generateSchedule();
-      } else {
-        _refreshOffset--;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('没有更多组合了'),
-                backgroundColor: Colors.orange),
-          );
-        }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ 无该种组合'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -611,9 +791,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            onPressed: _refreshSchedule,
+                            onPressed: _showRefreshDialog,
                             icon: const Icon(Icons.refresh, size: 20),
-                            tooltip: '刷新角色分配',
+                            tooltip: '手动指定角色',
                           ),
                           TextButton.icon(
                             onPressed: _showNextWeekRestDialog,
