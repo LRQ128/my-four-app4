@@ -306,12 +306,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 首次完全求解：所有休班日已由用户指定，只分配99999/协管
-  Future<void> _generateSchedule() async {
+  /// [lastSunday99999] 可手动指定上周日盯99999的人（用于跨周连续性约束）
+  Future<void> _generateSchedule({String? lastSunday99999}) async {
     final solver = SimpleScheduleSolver(
       names: _names,
       userRestDays: _restDays.map(_toSolverDay).toList(),
       closingDay: _toSolverDay(_closingDay),
-      lastSunday99999: _getLastSunday99999(),
+      lastSunday99999: lastSunday99999 ?? _getLastSunday99999(),
     );
 
     final monday = _getMonday(_weekOffset);
@@ -1141,23 +1142,132 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// 弹出连续性确认对话框
+  /// 生成非本周排班时，询问是否与上一周相连
+  /// 返回：null=取消, Map中 lastSunday99999=null=不连续, 否则为指定柜员名
+  Future<Map<String, dynamic>?> _promptContinuityIfNeeded(int weekOffset) async {
+    if (weekOffset <= 0) {
+      return {'lastSunday99999': null}; // 本周无需连续性
+    }
+
+    // 检查上一周的排班是否已锁定
+    final prevMonday = _getMonday(weekOffset - 1);
+    for (final s in _lockedHistory) {
+      if (s.weekStart.year == prevMonday.year &&
+          s.weekStart.month == prevMonday.month &&
+          s.weekStart.day == prevMonday.day) {
+        String? prevSunday99999;
+        for (final d in s.days) {
+          if (d.dayIndex == 6) prevSunday99999 = d.person99999;
+        }
+        return {'lastSunday99999': prevSunday99999};
+      }
+    }
+    // 上一周未锁定，手动询问
+    bool isContinuous = false;
+    String? selectedPerson;
+
+    return await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.link, size: 22),
+                  SizedBox(width: 8),
+                  Text('跨周连续性'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('是否与上一周相连？\n如果相连，上周日盯99999的人下周一时不能盯99999。'),
+                  const SizedBox(height: 16),
+                  SwitchListTile(
+                    title: const Text('与上一周相连'),
+                    subtitle: Text(isContinuous ? '已开启连续性规则' : '不启用连续性规则'),
+                    value: isContinuous,
+                    onChanged: (v) => setDialogState(() {
+                      isContinuous = v;
+                      if (!v) selectedPerson = null;
+                    }),
+                  ),
+                  if (isContinuous) ...[
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: selectedPerson,
+                      decoration: const InputDecoration(
+                        labelText: '上周日盯99999的柜员',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _names
+                          .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+                          .toList(),
+                      onChanged: (v) => setDialogState(() => selectedPerson = v),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消生成'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (isContinuous && selectedPerson == null) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                            content: Text('请选择上周日盯99999的柜员'),
+                            backgroundColor: Colors.orange),
+                      );
+                      return;
+                    }
+                    Navigator.pop(ctx, {
+                      'lastSunday99999': isContinuous ? selectedPerson : null,
+                    });
+                  },
+                  child: const Text('确定'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// 构建设置视图（嵌入排班Tab中）
   Widget _buildSettingsView() {
     return SettingsView(
       names: List.from(_names),
       closingDay: _closingDay,
       restDays: List.from(_restDays),
-      onSave: (names, closingDay, restDays) async {
+      weekOffset: _weekOffset,
+      onSave: (names, closingDay, restDays, weekOffset) async {
         setState(() {
           _names = names;
           _closingDay = closingDay;
           _restDays = restDays;
+          _weekOffset = weekOffset;
         });
         await DatabaseService.saveSetting('names', names.join(','));
         await DatabaseService.saveSetting('closing_day', closingDay.toString());
         await DatabaseService.saveSetting('rest_days', restDays.join(','));
         _currentIndex = 0;
-        _generateSchedule();
+
+        // 生成非本周排班时处理连续性
+        final continuity = await _promptContinuityIfNeeded(weekOffset);
+        if (continuity == null) {
+          // 用户取消了生成
+          return;
+        }
+        await _generateSchedule(
+            lastSunday99999: continuity['lastSunday99999'] as String?);
       },
     );
   }
@@ -1487,13 +1597,15 @@ class SettingsView extends StatefulWidget {
   final List<String> names;
   final int closingDay;
   final List<int> restDays;
-  final Function(List<String>, int, List<int>) onSave;
+  final int weekOffset;
+  final Function(List<String>, int, List<int>, int) onSave;
 
   const SettingsView({
     super.key,
     required this.names,
     required this.closingDay,
     required this.restDays,
+    required this.weekOffset,
     required this.onSave,
   });
 
@@ -1505,6 +1617,16 @@ class _SettingsViewState extends State<SettingsView> {
   late List<TextEditingController> _nameControllers;
   late int _closingDay;
   late List<int> _restDays;
+  late int _weekOffset;
+
+  String _weekLabel(int offset) {
+    switch (offset) {
+      case 0: return '本周';
+      case 1: return '下周';
+      case 2: return '下下周';
+      default: return '第${offset + 1}周';
+    }
+  }
 
   @override
   void initState() {
@@ -1513,6 +1635,7 @@ class _SettingsViewState extends State<SettingsView> {
         widget.names.map((n) => TextEditingController(text: n)).toList();
     _closingDay = widget.closingDay;
     _restDays = List.from(widget.restDays);
+    _weekOffset = widget.weekOffset;
   }
 
   @override
@@ -1618,6 +1741,38 @@ class _SettingsViewState extends State<SettingsView> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+
+        // 选择生成哪周
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('生成排班计划',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: _weekOffset,
+                  decoration:
+                      const InputDecoration(border: OutlineInputBorder()),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('本周')),
+                    DropdownMenuItem(value: 1, child: Text('下周')),
+                    DropdownMenuItem(value: 2, child: Text('下下周')),
+                  ],
+                  onChanged: (v) => setState(() => _weekOffset = v!),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '当前选择：${_weekLabel(_weekOffset)}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 24),
 
         // 生成排班按钮
@@ -1630,6 +1785,7 @@ class _SettingsViewState extends State<SettingsView> {
                 _nameControllers.map((c) => c.text).toList(),
                 _closingDay,
                 _restDays,
+                _weekOffset,
               );
             },
             icon: const Icon(Icons.auto_awesome),
