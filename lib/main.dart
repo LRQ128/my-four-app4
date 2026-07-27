@@ -490,28 +490,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                         style: TextStyle(
                                             fontSize: 10,
                                             color: Colors.grey[500])),
-                                    // 始终显示休班人（用户指定=橙色，自动分配=灰色）
-                                    final isUserRest = _isUserSpecifiedRestDay(
-                                        dayIndex, day.personRest);
                                     Container(
                                       margin:
                                           const EdgeInsets.only(top: 2),
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 4, vertical: 1),
                                       decoration: BoxDecoration(
-                                        color: isUserRest
+                                        color: _isUserSpecifiedRestDay(
+                                                dayIndex, day.personRest)
                                             ? Colors.orange[100]
                                             : Colors.grey[200],
                                         borderRadius:
                                             BorderRadius.circular(4),
                                       ),
                                       child: Text(
-                                          isUserRest
+                                          _isUserSpecifiedRestDay(
+                                                  dayIndex, day.personRest)
                                               ? '休${day.personRest}'
                                               : '${day.personRest}休',
                                           style: TextStyle(
                                               fontSize: 9,
-                                              color: isUserRest
+                                              color: _isUserSpecifiedRestDay(
+                                                      dayIndex, day.personRest)
                                                   ? Colors.orange[800]
                                                   : Colors.grey[600])),
                                     ),
