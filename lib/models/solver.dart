@@ -104,6 +104,7 @@ class SimpleScheduleSolver {
   // ============ 按用户约束求解（手动指定角色后刷新） ============
 
   /// 按用户填写的约束重新求解角色分配
+  /// 先尝试带跨周约束求解，无解时自动放松跨周约束
   WeekSchedule? solveWithFixedRestAndConstraints(
     DateTime weekStart,
     List<int> workingDays,
@@ -112,7 +113,21 @@ class SimpleScheduleSolver {
     final solutions = <WeekSchedule>[];
     _enumRolesWithConstraints(0, workingDays, <DaySchedule>[],
         solutions, weekStart, constraints);
-    return solutions.isNotEmpty ? solutions.first : null;
+    if (solutions.isNotEmpty) return solutions.first;
+    
+    // 带跨周约束无解，放松跨周约束再试一次
+    if (lastSunday99999 != null) {
+      final relaxed = SimpleScheduleSolver(
+        names: names,
+        userRestDays: userRestDays,
+        closingDay: closingDay,
+        lastSunday99999: null,
+      ).solveWithFixedRestAndConstraints(
+          weekStart, workingDays, constraints);
+      return relaxed;
+    }
+    
+    return null;
   }
 
   void _enumRolesWithConstraints(
