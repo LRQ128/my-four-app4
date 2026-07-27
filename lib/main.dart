@@ -490,31 +490,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                         style: TextStyle(
                                             fontSize: 10,
                                             color: Colors.grey[500])),
-                                    Container(
-                                      margin:
-                                          const EdgeInsets.only(top: 2),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 4, vertical: 1),
-                                      decoration: BoxDecoration(
-                                        color: _isUserSpecifiedRestDay(
-                                                dayIndex, day.personRest)
-                                            ? Colors.orange[100]
-                                            : Colors.grey[200],
-                                        borderRadius:
-                                            BorderRadius.circular(4),
+                                    if (_isUserSpecifiedRestDay(
+                                        dayIndex, day.personRest))
+                                      Container(
+                                        margin:
+                                            const EdgeInsets.only(top: 2),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange[100],
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text('休${day.personRest}',
+                                            style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.orange[800])),
                                       ),
-                                      child: Text(
-                                          _isUserSpecifiedRestDay(
-                                                  dayIndex, day.personRest)
-                                              ? '休${day.personRest}'
-                                              : '${day.personRest}休',
-                                          style: TextStyle(
-                                              fontSize: 9,
-                                              color: _isUserSpecifiedRestDay(
-                                                      dayIndex, day.personRest)
-                                                  ? Colors.orange[800]
-                                                  : Colors.grey[600])),
-                                    ),
                                   ],
                                 ),
                               ),
@@ -592,22 +584,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           );
                           return;
                         }
-                        // 检查填的人当天是否休班
-                        if (entry['name']!.isNotEmpty) {
-                          final restPersonToday = schedule.days
-                              .firstWhere((d) => d.dayIndex == dayIndex)
-                              .personRest;
-                          if (entry['name'] == restPersonToday) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                    '"${entry['name']}" 当天休班，不能担任${entry['role']}！'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                            return;
-                          }
-                        }
+
                       }
 
                       final constraint = <String, String?>{};
