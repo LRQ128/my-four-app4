@@ -161,30 +161,46 @@ class SimpleScheduleSolver {
     if (force99999 != null && forceXieguan != null && force99999 == forceXieguan) return;
 
     if (force99999 != null || forceXieguan != null) {
-      // 用户指定了某些角色
-      String p99999, pXieguan;
       if (force99999 != null && forceXieguan != null) {
-        // 同时指定了两人
-        p99999 = force99999;
-        pXieguan = forceXieguan;
+        // 同时指定了两人，唯一确定
+        current.add(DaySchedule(
+          dayIndex: dayIndex,
+          person99999: force99999,
+          personXieguan: forceXieguan,
+          personRest: restName,
+        ));
+        _enumRolesWithConstraints(idx + 1, workingDays, current,
+            solutions, weekStart, constraints);
+        current.removeLast();
       } else if (force99999 != null) {
-        // 只指定了99999，协管从剩余人中选
-        p99999 = force99999;
-        pXieguan = workers.firstWhere((w) => w != force99999);
+        // 只指定了99999，枚举所有可能的协管
+        for (final w in workers) {
+          if (w == force99999) continue;
+          current.add(DaySchedule(
+            dayIndex: dayIndex,
+            person99999: force99999,
+            personXieguan: w,
+            personRest: restName,
+          ));
+          _enumRolesWithConstraints(idx + 1, workingDays, current,
+              solutions, weekStart, constraints);
+          current.removeLast();
+        }
       } else {
-        // 只指定了协管，99999从剩余人中选
-        pXieguan = forceXieguan!;
-        p99999 = workers.firstWhere((w) => w != forceXieguan);
+        // 只指定了协管，枚举所有可能的99999
+        for (final w in workers) {
+          if (w == forceXieguan) continue;
+          current.add(DaySchedule(
+            dayIndex: dayIndex,
+            person99999: w,
+            personXieguan: forceXieguan!,
+            personRest: restName,
+          ));
+          _enumRolesWithConstraints(idx + 1, workingDays, current,
+              solutions, weekStart, constraints);
+          current.removeLast();
+        }
       }
-      current.add(DaySchedule(
-        dayIndex: dayIndex,
-        person99999: p99999,
-        personXieguan: pXieguan,
-        personRest: restName,
-      ));
-      _enumRolesWithConstraints(idx + 1, workingDays, current,
-          solutions, weekStart, constraints);
-      current.removeLast();
     } else if (workers.length == 2) {
       // 休班日：2人互换角色
       for (int i = 0; i < 2; i++) {
