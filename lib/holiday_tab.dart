@@ -581,7 +581,6 @@ class _HolidayTabState extends State<HolidayTab> {
     var preset = _presets().firstWhere(
         (p) => p.label == '国庆',
         orElse: () => _presets().first);
-    var holidayName = '${year}年${preset.label}';
     DateTime start = preset.start(year);
     DateTime end = start.add(Duration(days: preset.durationDays - 1));
     Set<int> closed = _rangeKeys(start, end); // 默认假期区间内全部关门
@@ -630,7 +629,7 @@ class _HolidayTabState extends State<HolidayTab> {
                     const SizedBox(height: 12),
                     // 假期类型
                     DropdownButtonFormField<String>(
-                      initialValue: preset.label,
+                      value: preset.label,
                       decoration: const InputDecoration(
                           labelText: '假期类型', border: OutlineInputBorder()),
                       items: _presets()
@@ -655,7 +654,7 @@ class _HolidayTabState extends State<HolidayTab> {
                     const SizedBox(height: 8),
                     // 年份
                     DropdownButtonFormField<int>(
-                      initialValue: year,
+                      value: year,
                       decoration: const InputDecoration(
                           labelText: '年份', border: OutlineInputBorder()),
                       items: List.generate(10, (i) => year - 1 + i)
@@ -782,7 +781,7 @@ class _HolidayTabState extends State<HolidayTab> {
                     const SizedBox(height: 8),
                     if (maxT >= minT)
                       DropdownButtonFormField<int>(
-                        initialValue: _clamp(_target, minT, maxT),
+                        value: _clamp(_target, minT, maxT),
                         decoration: const InputDecoration(
                             labelText: '每人休假天数',
                             border: OutlineInputBorder()),
@@ -1088,7 +1087,7 @@ class _HolidayTabState extends State<HolidayTab> {
   Widget _smallDropdown(
       String label, String value, List<String> opts, ValueChanged<String> onChanged) {
     return DropdownButtonFormField<String>(
-      initialValue:
+      value:
           opts.contains(value) ? value : (opts.isNotEmpty ? opts.first : ''),
       isDense: true,
       decoration: InputDecoration(
