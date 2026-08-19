@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -8,6 +9,7 @@ import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 
 import 'models/schedule.dart';
 import 'models/solver.dart';
+import 'holiday_tab.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +27,13 @@ class SchedulingApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('zh'), Locale('en')],
+      locale: const Locale('zh'),
       home: const HomeScreen(),
       debugShowCheckedModeBanner: false,
     );
@@ -45,7 +54,7 @@ class DatabaseService {
   static Future<Database> _initDb() async {
     final dir = await getApplicationDocumentsDirectory();
     final path = '${dir.path}/schedule.db';
-    return await openDatabase(path, version: 2,
+    return await openDatabase(path, version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE schedules (
@@ -65,10 +74,44 @@ class DatabaseService {
             value TEXT NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS holiday_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            holiday_name TEXT NOT NULL,
+            holiday_start TEXT NOT NULL,
+            holiday_end TEXT NOT NULL,
+            cover_start TEXT NOT NULL,
+            cover_end TEXT NOT NULL,
+            names TEXT NOT NULL,
+            closed_days TEXT NOT NULL,
+            target_rest_days INTEGER NOT NULL,
+            days_json TEXT NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE schedules ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 3) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS holiday_schedules (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              holiday_name TEXT NOT NULL,
+              holiday_start TEXT NOT NULL,
+              holiday_end TEXT NOT NULL,
+              cover_start TEXT NOT NULL,
+              cover_end TEXT NOT NULL,
+              names TEXT NOT NULL,
+              closed_days TEXT NOT NULL,
+              target_rest_days INTEGER NOT NULL,
+              days_json TEXT NOT NULL,
+              locked INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            )
+          ''');
         }
       },
     );
@@ -728,10 +771,14 @@ class _HomeScreenState extends State<HomeScreen> {
         body = _currentSchedule == null ? _buildEmptyState() : _buildScheduleView();
         break;
       case 1:
+        title = '假期排班';
+        body = const HolidayTab();
+        break;
+      case 2:
         title = '设置';
         body = _buildSettingsView();
         break;
-      case 2:
+      case 3:
         title = '历史记录';
         body = _buildHistoryView();
         break;
@@ -767,6 +814,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: (index) => setState(() => _currentIndex = index),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.calendar_month), label: '排班'),
+          BottomNavigationBarItem(icon: Icon(Icons.flight_takeoff), label: '假期排班'),
           BottomNavigationBarItem(icon: Icon(Icons.settings), label: '设置'),
           BottomNavigationBarItem(icon: Icon(Icons.history), label: '历史'),
         ],
@@ -1394,7 +1442,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showSettings() {
-    _currentIndex = 1;
+    _currentIndex = 2;
     setState(() {});
   }
 }
