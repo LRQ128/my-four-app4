@@ -31,22 +31,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Generate keystore
-        run: |
-          keytool -genkey -v \
-            -keystore android/app/release.jks \
-            -alias my-four-app4 \
-            -keyalg RSA -keysize 2048 -validity 36500 \
-            -storepass myfour123456 \
-            -keypass myfour123456 \
-            -dname "CN=LRQ128, OU=Dev, O=Personal, L=BJ, ST=BJ, C=CN"
-
-      - name: Export keystore artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: keystore
-          path: android/app/release.jks
-
       - name: Build APK
         run: flutter build apk --release
 
