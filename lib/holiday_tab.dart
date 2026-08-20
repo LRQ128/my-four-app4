@@ -164,6 +164,7 @@ class _HolidayTabState extends State<HolidayTab> {
   HolidaySchedule? _viewing;
   int? _expandedIndex;
   int _target = 4;
+  static const String _autoTag = '自动分配';
   final _nameCtl = TextEditingController();
   bool _nameCtlInit = false;
 
@@ -962,9 +963,9 @@ class _HolidayTabState extends State<HolidayTab> {
     final pxSel = <int, String>{};
     for (final d in openDays) {
       edit[d.dateKey] = false;
-      restSel[d.dateKey] = d.personRest;
-      p9Sel[d.dateKey] = d.person99999;
-      pxSel[d.dateKey] = d.personXieguan;
+      restSel[d.dateKey] = _autoTag;
+      p9Sel[d.dateKey] = _autoTag;
+      pxSel[d.dateKey] = _autoTag;
     }
 
     await showDialog(
@@ -1018,7 +1019,7 @@ class _HolidayTabState extends State<HolidayTab> {
                                 child: _smallDropdown(
                                   '休班人',
                                   restSel[d.dateKey]!,
-                                  ['无人休班', ..._names],
+                                  [_autoTag, '无人休班', ..._names],
                                   (v) => setDlg(() =>
                                       restSel[d.dateKey] =
                                           v == '无人休班' ? '' : v),
@@ -1031,7 +1032,7 @@ class _HolidayTabState extends State<HolidayTab> {
                                 child: _smallDropdown(
                                   '盯99999',
                                   p9Sel[d.dateKey]!,
-                                  _names,
+                                  [_autoTag, ..._names],
                                   (v) => setDlg(
                                       () => p9Sel[d.dateKey] = v),
                                 ),
@@ -1041,7 +1042,7 @@ class _HolidayTabState extends State<HolidayTab> {
                                 child: _smallDropdown(
                                   '协管',
                                   pxSel[d.dateKey]!,
-                                  _names,
+                                  [_autoTag, ..._names],
                                   (v) => setDlg(
                                       () => pxSel[d.dateKey] = v),
                                 ),
@@ -1067,9 +1068,10 @@ class _HolidayTabState extends State<HolidayTab> {
                   final k = d.dateKey;
                   if (!edit[k]!) continue; // 未手动 → 自动
                   cons[k] = RoleConstraint(
-                    forceRest: restSel[k]!,
-                    force99999: p9Sel[k],
-                    forceXieguan: pxSel[k],
+                    forceRest: restSel[k] == _autoTag ? null : restSel[k],
+                    force99999: p9Sel[k] == _autoTag ? null : p9Sel[k],
+                    forceXieguan:
+                        pxSel[k] == _autoTag ? null : pxSel[k],
                   );
                 }
                 Navigator.pop(ctx);
