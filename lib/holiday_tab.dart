@@ -967,6 +967,11 @@ class _HolidayTabState extends State<HolidayTab> {
       p9Sel[d.dateKey] = _autoTag;
       pxSel[d.dateKey] = _autoTag;
     }
+    // 只要某天填了任一人/角色（非"自动分配"），即视为手动生效，无需额外开开关
+    bool isMan(int k) =>
+        restSel[k] != _autoTag ||
+        p9Sel[k] != _autoTag ||
+        pxSel[k] != _autoTag;
 
     await showDialog(
       context: context,
@@ -1020,9 +1025,11 @@ class _HolidayTabState extends State<HolidayTab> {
                                   '休班人',
                                   restSel[d.dateKey]!,
                                   [_autoTag, '无人休班', ..._names],
-                                  (v) => setDlg(() =>
-                                      restSel[d.dateKey] =
-                                          v == '无人休班' ? '' : v),
+                                  (v) => setDlg(() {
+                                    restSel[d.dateKey] =
+                                        v == '无人休班' ? '' : v;
+                                    edit[d.dateKey] = isMan(d.dateKey);
+                                  }),
                                 ),
                               ),
                             ]),
@@ -1033,8 +1040,10 @@ class _HolidayTabState extends State<HolidayTab> {
                                   '盯99999',
                                   p9Sel[d.dateKey]!,
                                   [_autoTag, ..._names],
-                                  (v) => setDlg(
-                                      () => p9Sel[d.dateKey] = v),
+                                  (v) => setDlg(() {
+                                    p9Sel[d.dateKey] = v;
+                                    edit[d.dateKey] = isMan(d.dateKey);
+                                  }),
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -1043,8 +1052,10 @@ class _HolidayTabState extends State<HolidayTab> {
                                   '协管',
                                   pxSel[d.dateKey]!,
                                   [_autoTag, ..._names],
-                                  (v) => setDlg(
-                                      () => pxSel[d.dateKey] = v),
+                                  (v) => setDlg(() {
+                                    pxSel[d.dateKey] = v;
+                                    edit[d.dateKey] = isMan(d.dateKey);
+                                  }),
                                 ),
                               ),
                             ]),

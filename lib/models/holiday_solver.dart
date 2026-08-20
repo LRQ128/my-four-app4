@@ -135,18 +135,14 @@ class HolidayScheduleSolver {
       if (rn.isNotEmpty) forcedCount[rn] = forcedCount[rn]! + 1;
     }
     // 每人还需在 freeDays 中休的次数
+    // 指定(forceRest)优先：若某人被指定休班天数已 ≥ R，则其不再需要在空闲日补休，
+    // 允许用户指定的休班严格生效（可能使该人总休假略高于 targetRestDays）。
     final need = <String, int>{};
     var totalNeed = 0;
-    var infeasible = false;
     for (final n in names) {
       final nR = R - forcedCount[n]!;
-      need[n] = nR;
-      if (nR < 0) infeasible = true;
-      totalNeed += nR;
-    }
-    if (infeasible) {
-      messages.add('❌ 手动指定的休班使某人休假天数超过 $T 天，请减少其指定休班。');
-      return HolidayPlanResult(null, false, messages);
+      need[n] = nR < 0 ? 0 : nR;
+      totalNeed += need[n]!;
     }
     if (totalNeed > freeDays.length) {
       messages.add('❌ 未指定休班的开门日(${freeDays.length} 天)不足以完成补休，'
