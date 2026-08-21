@@ -1286,8 +1286,6 @@ class _ExportDialog extends StatefulWidget {
 }
 
 class _ExportDialogState extends State<_ExportDialog> {
-  final _key = GlobalKey();
-
   @override
   void initState() {
     super.initState();
@@ -1298,27 +1296,52 @@ class _ExportDialogState extends State<_ExportDialog> {
 
   Future<void> _capture() async {
     try {
-      final boundary = _key.currentContext?.findRenderObject();
-      if (boundary == null || boundary is! RenderRepaintBoundary) {
-        widget.onDone(false, '导出失败：无法获取区域');
-        return;
-      }
-      final image =
-          await (boundary as RenderRepaintBoundary).toImage(pixelRatio: 3.0);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) {
-        widget.onDone(false, '导出失败：图片数据为空');
-        return;
-      }
-      final file = File(
-          '${(await getTemporaryDirectory()).path}/holiday_${DateTime.now().millisecondsSinceEpoch}.png');
-      await file.writeAsBytes(byteData.buffer.asUint8List());
+      // 离屏完整渲染：不受滚动视图裁剪，保证排班计划整张导出
+      final key = GlobalKey();
+      late OverlayEntry entry;
+      entry = OverlayEntry(
+        builder: (_) => OverflowBox(
+          maxWidth: double.maxFinite,
+          maxHeight: double.maxFinite,
+          alignment: Alignment.topLeft,
+          child: RepaintBoundary(
+            key: key,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              color: Colors.white,
+              child: _buildExportBody(),
+            ),
+          ),
+        ),
+      );
+      Overlay.of(context)!.insert(entry);
       try {
-        const ch = MethodChannel('gallery_saver');
-        await ch.invokeMethod('saveToGallery', {'filePath': file.path});
-        widget.onDone(true, '✅ 已保存到「相册-排班表」文件夹');
-      } catch (_) {
-        widget.onDone(true, '✅ 图片已保存到临时目录:\n${file.path}');
+        await WidgetsBinding.instance.endOfFrame;
+        await Future.delayed(const Duration(milliseconds: 80));
+        final boundary = key.currentContext?.findRenderObject();
+        if (boundary == null || boundary is! RenderRepaintBoundary) {
+          widget.onDone(false, '导出失败：无法获取区域');
+          return;
+        }
+        final image = await (boundary as RenderRepaintBoundary)
+            .toImage(pixelRatio: 3.0);
+        final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+        if (byteData == null) {
+          widget.onDone(false, '导出失败：图片数据为空');
+          return;
+        }
+        final file = File(
+            '${(await getTemporaryDirectory()).path}/holiday_${DateTime.now().millisecondsSinceEpoch}.png');
+        await file.writeAsBytes(byteData.buffer.asUint8List());
+        try {
+          const ch = MethodChannel('gallery_saver');
+          await ch.invokeMethod('saveToGallery', {'filePath': file.path});
+          widget.onDone(true, '✅ 已保存到「相册-排班表」文件夹');
+        } catch (_) {
+          widget.onDone(true, '✅ 图片已保存到临时目录:\n${file.path}');
+        }
+      } finally {
+        entry.remove();
       }
     } catch (e) {
       widget.onDone(false, '导出失败: $e');
@@ -1327,21 +1350,29 @@ class _ExportDialogState extends State<_ExportDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.schedule;
-    final weeks = s.byWeek();
     return Dialog(
       insetPadding: const EdgeInsets.all(4),
-      child: RepaintBoundary(
-        key: _key,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          color: Colors.white,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
+      child: SingleChildScrollView(
+        scrollDirection: Axis.vertical,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            color: Colors.white,
+            child: _buildExportBody(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExportBody() {
+    final s = widget.schedule;
+    final weeks = s.byWeek();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
                 Text('假期排班表 - ${s.name}',
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.bold)),
@@ -1430,10 +1461,6 @@ class _ExportDialogState extends State<_ExportDialog> {
                     '$n: 休假${s.restCountOf(n)}天  99999×${s.count99999Of(n)}  协管×${s.countXieguanOf(n)}',
                     style: const TextStyle(fontSize: 12))),
               ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
