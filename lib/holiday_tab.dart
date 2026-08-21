@@ -1301,8 +1301,8 @@ class _ExportDialogState extends State<_ExportDialog> {
       late OverlayEntry entry;
       entry = OverlayEntry(
         builder: (_) => OverflowBox(
-          maxWidth: double.maxFinite,
-          maxHeight: double.maxFinite,
+          maxWidth: double.infinity,
+          maxHeight: double.infinity,
           alignment: Alignment.topLeft,
           child: RepaintBoundary(
             key: key,
